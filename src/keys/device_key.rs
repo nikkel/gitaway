@@ -49,6 +49,14 @@ impl DeviceKey {
     }
 }
 
+impl DeviceKey {
+    /// Hands the key to the WireGuard implementation, which keeps it for the
+    /// tunnel's lifetime and wipes it when the tunnel is dropped.
+    pub(crate) fn into_secret(self) -> StaticSecret {
+        self.0
+    }
+}
+
 impl fmt::Debug for DeviceKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "DeviceKey(public: {})", self.public_key())

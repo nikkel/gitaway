@@ -2,7 +2,7 @@
 name = "xtask"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.95"
 publish = false
 description = "Maintenance tasks for gitaway, run with `cargo xtask`."
 license = "MIT OR Apache-2.0"

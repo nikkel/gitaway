@@ -84,6 +84,7 @@ The exchange is given 1 second. A match means home; anything else (a different k
 | `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies. |
 | `src/home_check.rs` | The home check. |
 | `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
+| `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, and a userspace TCP/IP stack (`netstack.rs`). See [adding a transport](adding-a-transport.md). |
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |
@@ -109,4 +110,5 @@ The minimum is git 2.34, the version in Ubuntu 22.04. CI runs the tests against 
 
 - **A gitaway command:** see the `# Extending` section at the top of `src/cli/mod.rs`.
 - **A profile setting:** see `src/config/profile.rs`, and `src/cli/profile_cmd.rs` if `profile add` should ask for it. Update the [configuration reference](configuration.md) in the same change.
+- **A transport (another kind of VPN):** see [adding a transport](adding-a-transport.md).
 - **A network command:** add it to `NETWORK_COMMANDS` or `NETWORK_SUBCOMMANDS` in `src/git/classify.rs`, with a test.

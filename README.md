@@ -51,7 +51,7 @@ gitaway doesn't need OpenSSH itself: the home check uses an SSH implementation b
 
 ## Install
 
-From source, with [Rust](https://rustup.rs) 1.89 or newer:
+From source, with [Rust](https://rustup.rs) 1.95 or newer:
 
 ```console
 $ cargo install --git https://github.com/nikkel/gitaway

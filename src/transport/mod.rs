@@ -1,0 +1,112 @@
+//! Transports: how gitaway reaches home from elsewhere.
+//!
+//! A transport does one thing: open a TCP connection to an address on the
+//! home network. Everything above it (the local proxy git talks to, profile
+//! choice, the home check) only uses [`Transport::connect`], so a new kind
+//! of VPN never touches that code.
+//!
+//! ```text
+//!  proxy ──connect(10.0.0.1:2222)──▶ dyn Transport ──▶ stream to the server
+//!                                       ├─ WireGuard  (wireguard.rs)
+//!                                       └─ … a new transport is a new file
+//! ```
+//!
+//! Dropping a transport closes the tunnel and stops its background tasks.
+//!
+//! # Extending
+//!
+//! A new transport is a new [`crate::config::profile::Transport`] variant
+//! (its settings), a new file here implementing [`Transport`], and an arm in
+//! [`open`]. A VPN that carries IP packets can reuse [`netstack`] for TCP,
+//! as WireGuard does. See `docs/adding-a-transport.md`.
+
+pub mod netstack;
+pub mod wireguard;
+
+use std::future::Future;
+use std::io;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::time::Duration;
+
+use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::config::profile::{self, Profile};
+use crate::keys::device_key::DeviceKey;
+
+/// How long to wait for a connection through the tunnel, including the VPN
+/// handshake the first connection triggers.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A byte stream to a server on the home network.
+pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
+
+/// The future returned by [`Transport::connect`].
+pub type ConnectFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Box<dyn Stream>, TransportError>> + Send + 'a>>;
+
+/// An open tunnel that can make TCP connections to the home network.
+pub trait Transport: Send + Sync {
+    /// Opens a TCP connection to `target`, an address as seen from inside
+    /// the home network (the right-hand side of a `[hosts]` entry).
+    fn connect(&self, target: SocketAddr) -> ConnectFuture<'_>;
+}
+
+/// The tunnel couldn't be opened, or a connection through it failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TransportError {
+    /// The profile has no tunnel address yet.
+    #[error(
+        "profile `{profile}` has no tunnel address. Once the server has this device \
+         (see `gitaway peer {profile}`), set it with \
+         `gitaway profile set {profile} transport.wireguard.address <address>/32`"
+    )]
+    NoAddress {
+        /// The profile's name.
+        profile: String,
+    },
+    /// The VPN server's address couldn't be looked up.
+    #[error("couldn't find the VPN server {endpoint}: {reason}")]
+    Endpoint {
+        /// The endpoint as configured.
+        endpoint: String,
+        /// Why the lookup failed.
+        reason: String,
+    },
+    /// The tunnel couldn't be started on this machine.
+    #[error("couldn't start the tunnel: {0}")]
+    Setup(String),
+    /// No answer through the tunnel in time.
+    #[error(
+        "no answer from {target} through the tunnel within {} seconds. Check that the VPN \
+         server is reachable and has this device's public key (`gitaway peer`)",
+        CONNECT_TIMEOUT.as_secs()
+    )]
+    Timeout {
+        /// The address inside the home network.
+        target: SocketAddr,
+    },
+    /// The connection through the tunnel failed.
+    #[error("couldn't connect to {target} through the tunnel: {source}")]
+    Connect {
+        /// The address inside the home network.
+        target: SocketAddr,
+        /// What went wrong.
+        source: io::Error,
+    },
+}
+
+/// Opens the profile's tunnel with this device's key.
+pub async fn open(
+    name: &str,
+    profile: &Profile,
+    key: DeviceKey,
+) -> Result<Box<dyn Transport>, TransportError> {
+    match &profile.transport {
+        profile::Transport::WireGuard(settings) => Ok(Box::new(
+            wireguard::WireGuardTransport::open(name, settings, key).await?,
+        )),
+    }
+}

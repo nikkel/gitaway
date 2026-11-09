@@ -6,7 +6,7 @@ Thanks for helping. This guide covers building, testing and the conventions the 
 
 You need:
 
-- Rust 1.89 or newer;
+- Rust 1.95 or newer;
 - `git` 2.34 or newer on your `PATH`;
 - OpenSSH's `ssh-keygen`, which a few tests use to check gitaway against the keys and fingerprints OpenSSH produces. It's installed on most systems; on minimal Debian or Ubuntu, install `openssh-client`.
 
