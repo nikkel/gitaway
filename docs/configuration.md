@@ -69,9 +69,17 @@ How gitaway tells that you're on this place's own network. Without it, gitaway c
 | Setting | Required | Meaning |
 |---|---|---|
 | `ssh` | yes | An SSH server on the home network, as `host` or `host:port` (port 22 if left out). Your git server's SSH port is the natural choice. |
-| `host_key` | yes | That server's public host key, in OpenSSH's one-line format: `<type> <base64>`, optionally followed by a comment. Ed25519, ECDSA and RSA keys are accepted. |
+| `host_key` | to recognise home | That server's public host key, in OpenSSH's one-line format: `<type> <base64>`, optionally followed by a comment. Ed25519, ECDSA and RSA keys are accepted. Until it's set, gitaway can't recognise home, so it always uses the tunnel. |
 
-To get the key, run this on the home network:
+The easiest way to set the key is `gitaway check`, from anywhere, once the tunnel works:
+
+```console
+$ gitaway check home
+```
+
+It opens the tunnel, reaches the `ssh` server through it (at its `[hosts]` address), and has the server prove its host key. The tunnel is authenticated by WireGuard, so this is your server's real key even on an untrusted network. It shows the key's fingerprint and asks before pinning it. If a key is already pinned, it confirms it still matches; if it doesn't, it explains the possible reasons and asks before replacing it. `--yes` answers yes for scripts.
+
+Or, on the home network, get the key with `ssh-keyscan` and pass it to `profile add --host-key` or `profile set`:
 
 ```console
 $ ssh-keyscan -p 2222 -t ed25519 192.0.2.10
@@ -81,7 +89,7 @@ $ ssh-keyscan -p 2222 -t ed25519 192.0.2.10
 
 Copy only the key line, without the host name at its start: `ssh-ed25519 AAAA…`. Newer versions of `ssh-keyscan` print the `#` comment line first. Leave it out.
 
-Safer still, read the key from the server's own file, `/etc/ssh/ssh_host_ed25519_key.pub`, or from your forge's admin settings. Then a device pretending to be your server can't hand you its own key.
+On a LAN, `ssh-keyscan` trusts whatever answers. Reading the key from the server's own file, `/etc/ssh/ssh_host_ed25519_key.pub`, or from your forge's admin settings avoids that, as `gitaway check` does.
 
 How the check works is described in the [architecture guide](architecture.md#the-home-check).
 

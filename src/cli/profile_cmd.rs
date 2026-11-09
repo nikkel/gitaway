@@ -48,7 +48,7 @@ struct NewProfile {
     endpoint: HostPort,
     server_public_key: WireGuardPublicKey,
     address: Option<InterfaceAddress>,
-    home: Option<(HostPort, HostKey)>,
+    home: Option<(HostPort, Option<HostKey>)>,
     hosts: Vec<(HostPort, HostPort)>,
 }
 
@@ -88,11 +88,12 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     let home = match (home_ssh, args.host_key) {
         (Some(ssh), host_key) => {
             let question = format!(
-                "Its host key (one line of `ssh-keyscan -p {} {}`, without the host name)",
+                "Its host key (one line of `ssh-keyscan -p {} {}` run at home, without the host \
+                 name). Leave it blank to pin it later through the tunnel with `gitaway check`",
                 ssh.port.unwrap_or(22),
                 ssh.host
             );
-            let key = prompt::required(host_key, "--host-key", &question, |s| {
+            let key = prompt::optional(host_key, "--host-key", &question, |s| {
                 s.parse::<HostKey>().map_err(|e| e.to_string())
             })?;
             Some((ssh, key))
@@ -156,15 +157,18 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     );
     println!("{key_message}");
     warn_if_fallback(&keys, &name);
-    if let Some((_, key)) = &new.home {
-        println!(
+    match &new.home {
+        Some((_, Some(key))) => println!(
             "Home host key fingerprint: {}\n  Compare it on the server with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub`.",
             key.fingerprint()
-        );
-    } else {
-        println!(
+        ),
+        Some((_, None)) => println!(
+            "No home host key yet, so this profile will always use the tunnel until\n\
+             `gitaway check {name}` pins it (through the tunnel, once the server has this device)."
+        ),
+        None => println!(
             "No [home] section: gitaway can't tell when you're home, so it will always use the tunnel for this profile."
-        );
+        ),
     }
     if new.hosts.is_empty() {
         println!(
@@ -179,6 +183,7 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     );
     let profile = store.load_profile(&name)?;
     print_peer_block(&name, &profile, &public_key);
+    println!("\nThen run `gitaway check {name}` to test the tunnel.");
     Ok(())
 }
 
@@ -219,7 +224,9 @@ fn build_profile(new: &NewProfile) -> DocumentMut {
     if let Some((ssh, host_key)) = &new.home {
         let mut home = Table::new();
         home["ssh"] = value(ssh.to_string());
-        home["host_key"] = value(host_key.to_string());
+        if let Some(host_key) = host_key {
+            home["host_key"] = value(host_key.to_string());
+        }
         doc["home"] = Item::Table(home);
     }
     if !new.hosts.is_empty() {
@@ -260,11 +267,10 @@ fn show(store: &Store, name: &ProfileName) -> Result<(), Error> {
         source,
     })?;
     println!("# {}\n{}", path.display(), text.trim_end());
-    if let Some(home) = &profile.home {
-        println!(
-            "\n# home host key fingerprint: {}",
-            home.host_key.fingerprint()
-        );
+    match profile.home.as_ref().map(|home| &home.host_key) {
+        Some(Some(key)) => println!("\n# home host key fingerprint: {}", key.fingerprint()),
+        Some(None) => println!("\n# home host key: not pinned yet; `gitaway check {name}` pins it"),
+        None => {}
     }
     let keys = KeyStore::from_env(store.dir().clone())?;
     match keys.load(name)? {

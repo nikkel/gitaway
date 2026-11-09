@@ -37,6 +37,25 @@ pub enum Command {
     /// Manage this device's WireGuard keys.
     #[command(subcommand)]
     Key(KeyCommand),
+    /// Test a profile's tunnel and pin its home server's host key.
+    ///
+    /// Opens the tunnel, reaches the `[home]` SSH server through it, and
+    /// has that server prove its host key. The tunnel is authenticated by
+    /// WireGuard, so this is safe from any network. With no key pinned yet,
+    /// it offers to pin this one; if the pinned key differs, it says so and
+    /// offers to replace it. Finally it runs the home check from here.
+    Check(CheckArgs),
+}
+
+/// `gitaway check`
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// The profile. Defaults to the one this repository or your settings
+    /// choose.
+    pub profile: Option<String>,
+    /// Pin or replace the home server's host key without asking.
+    #[arg(long, short)]
+    pub yes: bool,
 }
 
 /// `gitaway peer`

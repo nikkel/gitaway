@@ -12,6 +12,7 @@
 //! [home]                            # how to tell you're on this LAN
 //! ssh = "192.0.2.10:2222"
 //! host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
+//! # host_key is optional: `gitaway check` pins it through the tunnel
 //!
 //! [hosts]                           # LAN address -> address through the tunnel
 //! "192.0.2.10" = "10.0.0.1"
@@ -85,8 +86,10 @@ pub struct WireGuard {
 pub struct Home {
     /// The SSH server to check. The port defaults to 22.
     pub ssh: HostPort,
-    /// The public host key that server must prove it holds.
-    pub host_key: HostKey,
+    /// The public host key that server must prove it holds. Until one is
+    /// pinned (`gitaway check` fetches it through the tunnel), gitaway can't
+    /// recognise home, so it always uses the tunnel.
+    pub host_key: Option<HostKey>,
 }
 
 impl Home {
@@ -313,6 +316,12 @@ mod tests {
     }
 
     #[test]
+    fn home_may_wait_for_its_host_key() {
+        let profile = with_transport("[home]\nssh = \"192.0.2.10:2222\"").unwrap();
+        assert_eq!(profile.home.unwrap().host_key, None);
+    }
+
+    #[test]
     fn invalid_profiles_are_rejected() {
         let cases = [
             (
@@ -349,10 +358,6 @@ mod tests {
             (
                 "bad host key",
                 &format!("{TRANSPORT}\n[home]\nssh = \"192.0.2.10\"\nhost_key = \"abc\""),
-            ),
-            (
-                "home without host_key",
-                &format!("{TRANSPORT}\n[home]\nssh = \"192.0.2.10\""),
             ),
             (
                 "mixed host and host:port",

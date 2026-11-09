@@ -47,8 +47,6 @@ git away push
 
 - **git 2.34 or newer** on your `PATH`.
 - Linux or macOS. Windows should work but isn't tested as thoroughly.
-- For the [quick start](#quick-start): `ssh-keyscan`, which comes with OpenSSH, to read your server's host key. There are [other ways](docs/configuration.md#home) to get it.
-
 gitaway doesn't need OpenSSH itself: the home check uses an SSH implementation built into gitaway. Your `ssh://` remotes still need an SSH client, as they do with plain git.
 
 ## Install
@@ -67,33 +65,22 @@ This installs two commands, `gitaway` and `git-away`. They're the same program: 
 
 All addresses here are examples. Use your own.
 
-**1. Get your server's SSH host key.** On your home network:
-
-```console
-$ ssh-keyscan -p 2222 -t ed25519 192.0.2.10
-# 192.0.2.10:2222 SSH-2.0-OpenSSH_9.6
-[192.0.2.10]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop
-```
-
-You need the key line without the host name: `ssh-ed25519 AAAA…`. Ignore the `#` line that newer versions print first.
-
-**2. Create a profile.** Run `gitaway profile add` and answer the questions, or give everything as flags:
+**1. Create a profile.** Run `gitaway profile add` and answer the questions, or give everything as flags:
 
 ```console
 $ gitaway profile add home \
     --endpoint vpn.example.net:51820 \
     --server-public-key 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' \
     --home-ssh 192.0.2.10:2222 \
-    --host-key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop' \
     --host 192.0.2.10=10.0.0.1 \
     --default
 ```
 
-The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. If you're copying from a WireGuard client config, the server's key is the `PublicKey` under `[Peer]`, not the client's own public key that apps show at the top. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel. If the git server runs on the WireGuard server itself, that's the WireGuard server's own tunnel address.
+The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. If you're copying from a WireGuard client config, the server's key is the `PublicKey` under `[Peer]`, not the client's own public key that apps show at the top. `--home-ssh` is an SSH server at home (your git server's SSH port is ideal) whose host key will tell gitaway you're home. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel. If the git server runs on the WireGuard server itself, that's the WireGuard server's own tunnel address.
 
-This also creates the profile's own WireGuard key for this device, kept in your OS keychain.
+This also creates the profile's own WireGuard key for this device, kept in your OS keychain. If your server or a WireGuard app already made a key pair for this device, use it with `gitaway key import home < client.conf` instead.
 
-**3. Tell your WireGuard server about this device.** `profile add` ends by printing this block, and `gitaway peer` prints it again:
+**2. Tell your WireGuard server about this device.** `profile add` ends by printing this block, and `gitaway peer` prints it again:
 
 ```console
 $ gitaway peer home
@@ -110,6 +97,19 @@ $ gitaway profile set home transport.wireguard.address 10.0.0.2/32
 ```
 
 The private key never leaves this device; only the public key goes to the server.
+
+**3. Check the tunnel and pin your home server's host key.** This works from anywhere:
+
+```console
+$ gitaway check home
+Tunnel: works. Reached 192.0.2.10:2222 through it, at 10.0.0.1:2222.
+Home server's host key: ssh-ed25519 SHA256:tAXFyTXI8xtDaujAEcwJslAYc9/6FKcUkd2Lw0xDhPo
+Pin this key, so gitaway can recognise home? yes
+Pinned it in profile `home`.
+Home check: away from home (no answer within 200 ms), so commands use the tunnel.
+```
+
+The key is fetched through the tunnel, which WireGuard has authenticated, so it's your server's real key even on a café network. Until a key is pinned, commands always use the tunnel. Run `gitaway check` again whenever something seems wrong: it says which part failed. (At home you can also pin the key from `ssh-keyscan`; see [the configuration reference](docs/configuration.md#home).)
 
 **4. Use git through gitaway.**
 
@@ -141,6 +141,7 @@ gitaway: 192.0.2.10:2222: no answer from the VPN server at 198.51.100.7:51820 wi
 | `gitaway profile remove <name>` | Delete a profile and its device key. |
 | `gitaway use <name>` | Pin the current repository to a profile. |
 | `gitaway peer [name]` | Print the `[Peer]` block your WireGuard server needs for this device. |
+| `gitaway check [name]` | Test the tunnel, pin or verify the home server's host key through it, and run the home check. |
 | `gitaway key rotate [name]` | Replace the profile's device key. The server needs the new public key afterwards. |
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
 | anything else | Passed to git. |
@@ -168,7 +169,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 
 ## Server side
 
-- **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec may count these as failed logins and eventually ban your laptop's address. Allowlist your home network in them. Each check is a single connection, so it rarely adds up, but a busy day of fetches can.
+- **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec, and the login protection built into many NAS systems, may count these as failed logins and ban your laptop's address. Allowlist your home network in them. Each check is a single connection, but a busy day of fetches adds up. A banned laptop looks exactly like being away (gitaway quietly uses the tunnel), so `gitaway check` points it out when the server answers through the tunnel but not directly.
 - **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device with the block `gitaway peer` prints.
 - **The git server must be reachable from the WireGuard server's side of the tunnel.** If WireGuard runs on the git server itself, use the server's tunnel address (such as `10.0.0.1`) in `[hosts]`. If it runs elsewhere on your network and forwards to it, you can map the host to its own LAN address: `"192.0.2.10" = "192.0.2.10"`.
 

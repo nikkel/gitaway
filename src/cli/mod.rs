@@ -6,7 +6,7 @@
 //!
 //!   no command, -h, --help ─────────► gitaway's help
 //!   --version ──────────────────────► gitaway's version
-//!   profile, use, peer, key ────────► gitaway's own commands (clap)
+//!   profile, use, peer, key, check ─► gitaway's own commands (clap)
 //!   list, tunnel ───────────────────► reserved: "not available yet"
 //!   network command (push, fetch …) ► network::plan, then git directly,
 //!                                     or through the tunnel (away)
@@ -31,6 +31,7 @@
 
 pub mod args;
 pub mod away;
+pub mod check_cmd;
 pub mod key_cmd;
 pub mod network;
 pub mod profile_cmd;
@@ -53,7 +54,7 @@ use crate::proxy;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
-pub const OWN_COMMANDS: &[&str] = &["profile", "use", "peer", "key"];
+pub const OWN_COMMANDS: &[&str] = &["profile", "use", "peer", "key", "check"];
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
@@ -172,6 +173,11 @@ fn run_own_command(
             let store = open_store()?;
             let name = pick_profile(&store, profile, profile_flag, global_options)?;
             key_cmd::rotate(&store, &name, yes)
+        }
+        args::Command::Check(command) => {
+            let store = open_store()?;
+            let name = pick_profile(&store, command.profile, profile_flag, global_options)?;
+            check_cmd::run(&store, &name, command.yes)
         }
         args::Command::Key(args::KeyCommand::Import { profile, yes }) => {
             let store = open_store()?;

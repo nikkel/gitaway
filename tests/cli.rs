@@ -1001,22 +1001,24 @@ mod away {
     /// real WireGuard server forwarding `ports`. 192.0.2.10 (unreachable
     /// otherwise) maps to the server's side of the tunnel.
     fn away_profile(env: &Env, ports: &[u16]) {
+        let home_ssh = format!("127.0.0.1:{}", closed_port());
+        tunnel_profile(
+            env,
+            &["--home-ssh", &home_ssh, "--host-key", HOST_KEY],
+            ports,
+        );
+    }
+
+    /// A profile `home` (with `flags` added) whose WireGuard server is real
+    /// and forwards `ports`, with 192.0.2.10 mapped to the server's side of
+    /// the tunnel.
+    fn tunnel_profile(env: &Env, flags: &[&str], ports: &[u16]) {
         let server_key = DeviceKey::generate();
         let server_public = server_key.public_key().to_string();
-        env.add_profile_with_server(
-            "home",
-            &server_public,
-            &[
-                "--address",
-                &format!("{DEVICE_TUNNEL_ADDRESS}/32"),
-                "--home-ssh",
-                &format!("127.0.0.1:{}", closed_port()),
-                "--host-key",
-                HOST_KEY,
-                "--host",
-                "192.0.2.10=10.0.0.1",
-            ],
-        );
+        let address = format!("{DEVICE_TUNNEL_ADDRESS}/32");
+        let mut all_flags = vec!["--address", &address, "--host", "192.0.2.10=10.0.0.1"];
+        all_flags.extend_from_slice(flags);
+        env.add_profile_with_server("home", &server_public, &all_flags);
         let device = env.device_public_key("home");
         let server = home_server(server_key, &device.parse().unwrap(), ports);
         env.gitaway()
@@ -1044,6 +1046,108 @@ mod away {
             });
         });
         rx.recv().unwrap()
+    }
+
+    fn profile_text(env: &Env) -> String {
+        std::fs::read_to_string(env.path("config/gitaway/profiles/home.toml")).unwrap()
+    }
+
+    /// The base64 part of a public key line, which is what's compared.
+    fn key_body(line: &str) -> &str {
+        line.split_whitespace().nth(1).unwrap()
+    }
+
+    #[test]
+    fn check_pins_the_home_key_through_the_tunnel_only_when_told() {
+        let env = Env::new();
+        let (port, server_host_key) = ssh_server(11);
+        let home_ssh = format!("192.0.2.10:{port}");
+        tunnel_profile(&env, &["--home-ssh", &home_ssh], &[port]);
+
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .code(1)
+            .stdout(
+                predicate::str::contains("Tunnel: works")
+                    .and(predicate::str::contains("--yes"))
+                    .and(predicate::str::contains("no key pinned")),
+            );
+        assert!(!profile_text(&env).contains("host_key"));
+
+        env.gitaway()
+            .args(["check", "home", "--yes"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Pinned it"));
+        assert!(profile_text(&env).contains(key_body(&server_host_key)));
+
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("It matches")
+                    .and(predicate::str::contains("Home check: away")),
+            );
+    }
+
+    #[test]
+    fn check_warns_when_the_pinned_key_differs_and_replaces_it_only_when_told() {
+        let env = Env::new();
+        let (port, server_host_key) = ssh_server(12);
+        let home_ssh = format!("192.0.2.10:{port}");
+        tunnel_profile(
+            &env,
+            &["--home-ssh", &home_ssh, "--host-key", HOST_KEY],
+            &[port],
+        );
+
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("WARNING: it differs"));
+        assert!(profile_text(&env).contains(key_body(HOST_KEY)));
+
+        env.gitaway()
+            .args(["check", "home", "--yes"])
+            .assert()
+            .success();
+        let text = profile_text(&env);
+        assert!(text.contains(key_body(&server_host_key)), "{text}");
+        assert!(!text.contains(key_body(HOST_KEY)), "{text}");
+    }
+
+    #[test]
+    fn check_needs_to_know_where_home_is_through_the_tunnel() {
+        let env = Env::new();
+        // 192.0.2.20 isn't in [hosts], so there's no address to try.
+        env.add_profile("home", &["--home-ssh", "192.0.2.20:22"]);
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("'hosts.\"192.0.2.20\"'"));
+    }
+
+    #[test]
+    fn without_a_pinned_key_commands_use_the_tunnel_and_say_how_to_pin_it() {
+        let env = Env::new();
+        let port = http_server();
+        let (ssh_port, _) = ssh_server(13);
+        let home_ssh = format!("127.0.0.1:{ssh_port}");
+        tunnel_profile(&env, &["--home-ssh", &home_ssh], &[port]);
+        env.gitaway()
+            .args(["ls-remote", &format!("http://192.0.2.10:{port}/app.git")])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("gitaway check home"));
+        assert!(
+            ran(&env, "ls-remote http://192.0.2.10"),
+            "{:?}",
+            env.git_log()
+        );
     }
 
     #[test]

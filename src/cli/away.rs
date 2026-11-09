@@ -19,10 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::lock::ProfileLock;
+use crate::config::name::ProfileName;
+use crate::config::store::Store;
 use crate::error::Error;
 use crate::git::remote_url::Scheme;
 use crate::git::repo::Repo;
 use crate::git::runner::{Git, exit_code, spawn_error};
+use crate::keys::device_key::DeviceKey;
 use crate::keys::store::KeyStore;
 use crate::proxy::Proxy;
 use crate::proxy::git_env::{self, SshSettings};
@@ -31,7 +34,7 @@ use crate::transport::{self, Transport};
 use super::network::AwayPlan;
 
 /// How long to wait for background tasks to stop after git has finished.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
+pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 /// Runs git through the tunnel and returns git's exit code.
 pub fn run(plan: AwayPlan) -> Result<i32, Error> {
@@ -45,31 +48,14 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 
     let store = super::open_store()?;
     let name = &plan.name;
-    let _lock = ProfileLock::acquire(store.dir(), name, || {
-        eprintln!(
-            "gitaway: another gitaway command is using profile `{name}`'s tunnel; waiting for it to finish…"
-        );
-    })
-    .map_err(|e| Error::msg(e.to_string()))?;
-
-    let keys = KeyStore::from_env(store.dir().clone())?;
-    let key = keys.load(name)?.ok_or_else(|| {
-        Error::msg(format!(
-            "profile `{name}` has no device key, so it can't open the tunnel. \
-             Create one with `gitaway key rotate {name}` and give the server its public key"
-        ))
-    })?;
+    let (_lock, key) = take_tunnel(&store, name)?;
 
     let repo = Repo::new(Git::new(&plan.global_options));
     let core_ssh_command = repo.ssh_command()?;
     let exe = std::env::current_exe()
         .map_err(|e| Error::msg(format!("couldn't find gitaway's own path: {e}")))?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .map_err(|e| Error::msg(format!("couldn't start the tunnel's runtime: {e}")))?;
+    let runtime = runtime()?;
     let result = runtime.block_on(async {
         let transport: Arc<dyn Transport> =
             Arc::from(transport::open(name.as_str(), &plan.profile, key).await?);
@@ -106,6 +92,39 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
     // Everything spawned on the runtime (proxy, tunnel) stops here.
     runtime.shutdown_timeout(SHUTDOWN_GRACE);
     result
+}
+
+/// Takes the profile's lock (waiting if another command holds it, since the
+/// server keeps one session per device key) and loads the device key. Hold
+/// the lock until the tunnel is closed.
+pub(crate) fn take_tunnel(
+    store: &Store,
+    name: &ProfileName,
+) -> Result<(ProfileLock, DeviceKey), Error> {
+    let lock = ProfileLock::acquire(store.dir(), name, || {
+        eprintln!(
+            "gitaway: another gitaway command is using profile `{name}`'s tunnel; waiting for it to finish…"
+        );
+    })
+    .map_err(|e| Error::msg(e.to_string()))?;
+
+    let keys = KeyStore::from_env(store.dir().clone())?;
+    let key = keys.load(name)?.ok_or_else(|| {
+        Error::msg(format!(
+            "profile `{name}` has no device key, so it can't open the tunnel. \
+             Create one with `gitaway key rotate {name}` and give the server its public key"
+        ))
+    })?;
+    Ok((lock, key))
+}
+
+/// Starts the small runtime the tunnel and proxy run on.
+pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, Error> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|e| Error::msg(format!("couldn't start the tunnel's runtime: {e}")))
 }
 
 /// Spawns git with the proxy's environment and waits for it.

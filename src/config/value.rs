@@ -66,6 +66,11 @@ impl HostKey {
     pub fn matches(&self, key: &PublicKey) -> bool {
         self.0.key_data() == key.key_data()
     }
+
+    /// Whether `other` is the same key. Comments are ignored.
+    pub fn same_key(&self, other: &HostKey) -> bool {
+        self.matches(&other.0)
+    }
 }
 
 impl From<PublicKey> for HostKey {
@@ -229,6 +234,12 @@ mod tests {
             with_comment.matches(&key.0),
             "comment and whitespace are ignored"
         );
+        assert!(with_comment.same_key(&key));
+        let other: HostKey =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMvYiBUrfk1wKQzD2Ld5XXqHGq8z3wWNEJ+mJYEpmmGo"
+                .parse()
+                .unwrap();
+        assert!(!other.same_key(&key));
 
         for bad in [
             "",

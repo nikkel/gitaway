@@ -29,6 +29,14 @@
 //!   never accepted.
 //! - SSH certificates are never requested, and rejected if presented.
 //! - Every failure, including a timeout, means "away". It never means "home".
+//!   So does a profile with no pinned key yet.
+//!
+//! # Capturing the key
+//!
+//! [`capture`] runs the same key exchange over a stream through the tunnel
+//! and returns the key the server proved it holds. WireGuard has already
+//! authenticated the far end, so this is safe from any network, unlike
+//! `ssh-keyscan` on an untrusted LAN.
 //!
 //! # Extending
 //!
@@ -41,8 +49,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use russh::client;
-use russh::keys::{Algorithm, HashAlg, PublicKeyOrCertificate};
+use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKeyOrCertificate};
 use russh::{Preferred, SshId};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use crate::config::profile::Home;
@@ -98,6 +107,9 @@ pub enum AwayReason {
     /// The server offered a certificate instead of a plain host key.
     #[error("the server presented an SSH certificate; gitaway pins plain host keys")]
     Certificate,
+    /// The profile has no host key yet, so home can't be recognised.
+    #[error("no host key is pinned for the home server yet")]
+    NotPinned,
     /// A real SSH server answered, proving it holds a *different* key. On a
     /// foreign network that's another machine at the same address; at home it
     /// means the server's key changed. Worth telling the user either way.
@@ -142,47 +154,127 @@ pub fn check_with(home: &Home, timeouts: Timeouts) -> Result<Verdict, CheckError
 
 /// The home check, for callers already inside a tokio runtime.
 pub async fn verify(home: &Home, timeouts: Timeouts) -> Verdict {
+    let Some(pinned) = &home.host_key else {
+        return Verdict::Away(AwayReason::NotPinned);
+    };
     let address = (home.ssh.host.as_str(), home.ssh_port());
     let stream = match tokio::time::timeout(timeouts.connect, TcpStream::connect(address)).await {
         Err(_) => return Verdict::Away(AwayReason::ConnectTimeout(timeouts.connect)),
         Ok(Err(e)) => return Verdict::Away(AwayReason::Unreachable(e.to_string())),
         Ok(Ok(stream)) => stream,
     };
+    let offered = signature_algorithms(pinned.algorithm());
+    match exchange(stream, offered, timeouts.exchange).await {
+        Exchange::Key(key) if pinned.matches(&key) => Verdict::Home,
+        Exchange::Key(key) => Verdict::Away(AwayReason::WrongKey {
+            fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+        }),
+        Exchange::Certificate => Verdict::Away(AwayReason::Certificate),
+        Exchange::TimedOut => Verdict::Away(AwayReason::ExchangeTimeout(timeouts.exchange)),
+        Exchange::Failed(reason) => Verdict::Away(AwayReason::Handshake(reason)),
+    }
+}
 
+/// Why a host key couldn't be captured.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CaptureError {
+    /// The key exchange didn't finish in time.
+    #[error("the SSH key exchange didn't finish within {} seconds", .0.as_secs())]
+    Timeout(Duration),
+    /// Not a valid SSH key exchange (including a bad signature).
+    #[error("the SSH key exchange failed: {0}")]
+    Handshake(String),
+    /// The server offered a certificate instead of a plain host key.
+    #[error("the server presented an SSH certificate; gitaway pins plain host keys")]
+    Certificate,
+}
+
+/// Runs the key exchange over `stream` (a connection through the tunnel)
+/// and returns the host key the server proved it holds.
+///
+/// Every key type gitaway can pin is offered, best first: Ed25519, then
+/// ECDSA, then RSA with SHA-2. A server with several host keys presents the
+/// first of these it has, and that's the one to pin, because the home check
+/// later offers only that type. `prefer` puts one type first, so comparing
+/// with an already pinned key compares like with like.
+pub async fn capture<S>(
+    stream: S,
+    timeout: Duration,
+    prefer: Option<Algorithm>,
+) -> Result<HostKey, CaptureError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    match exchange(stream, capture_algorithms(prefer), timeout).await {
+        Exchange::Key(key) => Ok(HostKey::from(key)),
+        Exchange::Certificate => Err(CaptureError::Certificate),
+        Exchange::TimedOut => Err(CaptureError::Timeout(timeout)),
+        Exchange::Failed(reason) => Err(CaptureError::Handshake(reason)),
+    }
+}
+
+/// The host key algorithms [`capture`] offers, in order.
+fn capture_algorithms(prefer: Option<Algorithm>) -> Vec<Algorithm> {
+    let mut all = vec![Algorithm::Ed25519];
+    all.extend(
+        [
+            EcdsaCurve::NistP256,
+            EcdsaCurve::NistP384,
+            EcdsaCurve::NistP521,
+        ]
+        .map(|curve| Algorithm::Ecdsa { curve }),
+    );
+    all.extend(signature_algorithms(Algorithm::Rsa { hash: None }));
+    let mut offered = prefer.map(signature_algorithms).unwrap_or_default();
+    offered.retain(|algorithm| all.contains(algorithm));
+    for algorithm in all {
+        if !offered.contains(&algorithm) {
+            offered.push(algorithm);
+        }
+    }
+    offered
+}
+
+/// What an SSH key exchange showed.
+enum Exchange {
+    /// A plain host key, after russh verified the server's signature.
+    Key(russh::keys::PublicKey),
+    Certificate,
+    TimedOut,
+    Failed(String),
+}
+
+/// Runs an SSH key exchange over `stream`, offering the `offered` host key
+/// signature algorithms, and stops before any login.
+async fn exchange<S>(stream: S, offered: Vec<Algorithm>, timeout: Duration) -> Exchange
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let seen = Arc::new(Mutex::new(None));
     let handler = KeyRecorder {
         seen: Arc::clone(&seen),
     };
-    let exchange = client::connect_stream(client_config(&home.host_key), stream, handler);
-    let outcome = tokio::time::timeout(timeouts.exchange, exchange).await;
+    let connecting = client::connect_stream(client_config(offered), stream, handler);
+    let outcome = tokio::time::timeout(timeout, connecting).await;
     let seen = seen.lock().unwrap_or_else(PoisonError::into_inner).take();
 
     match (outcome, seen) {
-        (Err(_), _) => Verdict::Away(AwayReason::ExchangeTimeout(timeouts.exchange)),
+        (Err(_), _) => Exchange::TimedOut,
         // Our handler always stops the connection, so `outcome` is an error
         // whenever a key was seen. What was seen decides.
-        (Ok(_), Some(Seen::Key(key))) => {
-            if home.host_key.matches(&key) {
-                Verdict::Home
-            } else {
-                Verdict::Away(AwayReason::WrongKey {
-                    fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-                })
-            }
-        }
-        (Ok(_), Some(Seen::Certificate)) => Verdict::Away(AwayReason::Certificate),
-        (Ok(Err(e)), None) => Verdict::Away(AwayReason::Handshake(e.to_string())),
-        (Ok(Ok(_)), None) => Verdict::Away(AwayReason::Handshake(
-            "the server's key was never checked".to_owned(),
-        )),
+        (Ok(_), Some(Seen::Key(key))) => Exchange::Key(key),
+        (Ok(_), Some(Seen::Certificate)) => Exchange::Certificate,
+        (Ok(Err(e)), None) => Exchange::Failed(e.to_string()),
+        (Ok(Ok(_)), None) => Exchange::Failed("the server's key was never checked".to_owned()),
     }
 }
 
 /// Client settings: identify as gitaway (so server logs say what connected),
-/// offer only the pinned key's type, and never ask for certificates.
-fn client_config(pinned: &HostKey) -> Arc<client::Config> {
+/// offer only the given host key algorithms, and never ask for certificates.
+fn client_config(offered: Vec<Algorithm>) -> Arc<client::Config> {
     let preferred = Preferred {
-        key: Cow::Owned(signature_algorithms(pinned.algorithm())),
+        key: Cow::Owned(offered),
         host_key_certificates: Cow::Borrowed(&[]),
         ..Preferred::DEFAULT
     };
@@ -262,7 +354,7 @@ mod tests {
                 host: "127.0.0.1".into(),
                 port: Some(port),
             },
-            host_key: HostKey::from(pinned.public_key().clone()),
+            host_key: Some(HostKey::from(pinned.public_key().clone())),
         }
     }
 
@@ -318,6 +410,71 @@ mod tests {
             }
         });
         port
+    }
+
+    #[test]
+    fn a_home_with_no_pinned_key_is_away() {
+        runtime().block_on(async {
+            let key = ed25519(1);
+            let port = ssh_server(vec![key.clone()]).await;
+            let mut unpinned = home(port, &key);
+            unpinned.host_key = None;
+            assert_eq!(
+                verify(&unpinned, fast()).await,
+                Verdict::Away(AwayReason::NotPinned)
+            );
+        });
+    }
+
+    #[test]
+    fn capture_returns_the_key_the_server_proved() {
+        runtime().block_on(async {
+            let key = ed25519(3);
+            let port = ssh_server(vec![key.clone()]).await;
+            let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            let captured = capture(stream, Duration::from_secs(2), None).await.unwrap();
+            assert!(captured.matches(key.public_key()));
+        });
+    }
+
+    #[test]
+    fn capture_fails_clearly_when_no_ssh_server_answers() {
+        runtime().block_on(async {
+            let not_ssh = tcp_server(|mut socket| async move {
+                let _ = socket.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+            })
+            .await;
+            let stream = TcpStream::connect(("127.0.0.1", not_ssh)).await.unwrap();
+            let error = capture(stream, Duration::from_secs(2), None)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, CaptureError::Handshake(_)), "{error}");
+
+            let silent = tcp_server(|socket| async move {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                drop(socket);
+            })
+            .await;
+            let stream = TcpStream::connect(("127.0.0.1", silent)).await.unwrap();
+            let error = capture(stream, Duration::from_millis(300), None)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, CaptureError::Timeout(_)), "{error}");
+        });
+    }
+
+    #[test]
+    fn capture_offers_every_pinnable_type_with_the_preferred_one_first() {
+        let rsa = Algorithm::Rsa { hash: None };
+        let default = capture_algorithms(None);
+        assert_eq!(default[0], Algorithm::Ed25519);
+        let preferred = capture_algorithms(Some(rsa.clone()));
+        assert_eq!(&preferred[..2], &signature_algorithms(rsa.clone())[..]);
+        for offered in [&default, &preferred] {
+            assert!(!offered.contains(&rsa), "SHA-1 RSA is never offered");
+            assert_eq!(offered.len(), 6, "{offered:?}");
+            assert!(offered.contains(&Algorithm::Ed25519));
+        }
     }
 
     #[test]
@@ -489,6 +646,65 @@ mod openssh_tests {
         }
     }
 
+    /// An SSH server on 127.0.0.1 with all of `keys`. Returns its port.
+    async fn multi_key_server(keys: &[(russh::keys::PrivateKey, String)]) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let config = Arc::new(russh::server::Config {
+            keys: keys.iter().map(|(private, _)| private.clone()).collect(),
+            ..Default::default()
+        });
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let config = Arc::clone(&config);
+                tokio::spawn(async move {
+                    if let Ok(session) =
+                        russh::server::run_stream(config, socket, super::tests_support::Server)
+                            .await
+                    {
+                        let _ = session.await;
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// Capturing from a server with several host keys gets Ed25519, the best
+    /// type, unless a pinned key's type is preferred: then that one, so it
+    /// can be compared with the pin.
+    #[test]
+    fn capture_takes_ed25519_or_the_preferred_type_from_multi_key_servers() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Ed25519 last, so the server's own order can't be what picks it.
+        let keys: Vec<_> = ["rsa", "ecdsa", "ed25519"]
+            .into_iter()
+            .map(|kind| keygen(dir.path(), kind))
+            .collect();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let port = multi_key_server(&keys).await;
+            let capture_preferring = |prefer: Option<Algorithm>| async move {
+                let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .unwrap();
+                capture(stream, Duration::from_secs(5), prefer)
+                    .await
+                    .unwrap()
+            };
+            let ed25519: HostKey = keys[2].1.parse().unwrap();
+            assert!(capture_preferring(None).await.same_key(&ed25519));
+            for (_, public) in &keys {
+                let pinned: HostKey = public.parse().unwrap();
+                let captured = capture_preferring(Some(pinned.algorithm())).await;
+                assert!(captured.same_key(&pinned), "{public}");
+            }
+        });
+    }
+
     /// A server with several host keys presents the one the client asks for
     /// first. Pinning each key in turn must still verify, which only works
     /// because the client offers just the pinned key's type.
@@ -505,33 +721,14 @@ mod openssh_tests {
             .build()
             .unwrap();
         runtime.block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            let config = Arc::new(russh::server::Config {
-                keys: keys.iter().map(|(private, _)| private.clone()).collect(),
-                ..Default::default()
-            });
-            tokio::spawn(async move {
-                while let Ok((socket, _)) = listener.accept().await {
-                    let config = Arc::clone(&config);
-                    tokio::spawn(async move {
-                        if let Ok(session) =
-                            russh::server::run_stream(config, socket, super::tests_support::Server)
-                                .await
-                        {
-                            let _ = session.await;
-                        }
-                    });
-                }
-            });
-
+            let port = multi_key_server(&keys).await;
             for (_, public) in &keys {
                 let home = Home {
                     ssh: HostPort {
                         host: "127.0.0.1".into(),
                         port: Some(port),
                     },
-                    host_key: public.parse().unwrap(),
+                    host_key: Some(public.parse().unwrap()),
                 };
                 let timeouts = Timeouts {
                     connect: Duration::from_millis(500),

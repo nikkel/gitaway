@@ -36,6 +36,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "Print the [Peer] block the WireGuard server needs for this device. See gitaway-peer(1).",
     ),
     (
+        "check",
+        "Test the tunnel, and pin or verify the home server's host key through it. See gitaway-check(1).",
+    ),
+    (
         "key",
         "Replace this device's WireGuard key with key rotate, or use an existing one with key \
          import. See gitaway-key-rotate(1) and gitaway-key-import(1).",
@@ -207,8 +211,10 @@ fn main_page() -> String {
         "gitaway connects to the SSH server in the profile's [home] section and \
          asks it to prove it holds the pinned host_key, as a normal SSH connection \
          does. Nothing logs in. If it proves it, you're home and git runs \
-         directly. A different key, no answer within about a second, or a refused \
-         connection all mean you're not home.",
+         directly. A different key, no answer within about a second, a refused \
+         connection, or no pinned key all mean you're not home. gitaway check pins \
+         the key through the tunnel, where WireGuard has already authenticated the \
+         server.",
     );
 
     page.section("AWAY FROM HOME");
@@ -272,8 +278,8 @@ fn main_page() -> String {
 
     page.section("SEE ALSO");
     page.text(
-        "gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-key-rotate(1), \
-         gitaway-key-import(1), git(1), ssh-keyscan(1)",
+        "gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-check(1), \
+         gitaway-key-rotate(1), gitaway-key-import(1), git(1), ssh-keyscan(1)",
     );
 
     page.roff.to_roff()
@@ -353,6 +359,7 @@ mod tests {
             "gitaway-peer.1",
             "gitaway-key-rotate.1",
             "gitaway-key-import.1",
+            "gitaway-check.1",
         ] {
             assert!(pages.contains_key(name), "{name} missing");
         }

@@ -126,8 +126,16 @@ pub fn plan(
     match verdict {
         Some(Verdict::Home) => direct(args),
         Some(Verdict::Away(reason)) => {
-            if let AwayReason::WrongKey { fingerprint } = &reason {
-                wrong_key_note(resolved.name, resolved.profile, fingerprint);
+            match &reason {
+                AwayReason::WrongKey { fingerprint } => {
+                    wrong_key_note(resolved.name, resolved.profile, fingerprint);
+                }
+                AwayReason::NotPinned => eprintln!(
+                    "gitaway: note: profile `{}` has no home host key yet, so it can't tell when \
+                     you're home and uses the tunnel. Pin the key with `gitaway check {}`",
+                    resolved.name, resolved.name
+                ),
+                _ => {}
             }
             Ok(Plan::Away(Box::new(AwayPlan {
                 args,
@@ -241,7 +249,7 @@ fn wrong_key_note(name: &ProfileName, profile: &Profile, fingerprint: &str) {
     eprintln!(
         "gitaway: note: {server} answered with a different host key ({fingerprint}), so this \
          isn't profile `{name}`'s home network. Using the tunnel.\n\
-         If you are home, the server's key may have changed: check it on the server, then update \
-         it with `gitaway profile set {name} home.host_key '<new key>'`"
+         If you are home, the server's key may have changed: `gitaway check {name}` fetches the \
+         server's current key through the tunnel and offers to update it"
     );
 }

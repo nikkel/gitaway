@@ -75,7 +75,9 @@ gitaway [--profile <name>] [git global options] <command> [args]
 3. The server signs the exchange with its host key. The SSH library (`russh`) checks that signature before gitaway sees the key, so a server that only knows the public key can't pass.
 4. Compare the key with the pinned `host_key`. The connection is closed without logging in.
 
-The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection) means away. The code is in `src/home_check.rs`.
+The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection, or no key pinned yet) means away. The code is in `src/home_check.rs`.
+
+`gitaway check` (`src/cli/check_cmd.rs`) pins the key in the first place. It runs the same exchange over a connection through the tunnel (`home_check::capture`), offering every type gitaway can pin, best first (Ed25519, ECDSA, RSA with SHA-2), or the already pinned type first when there is one, so the comparison is like for like. WireGuard has authenticated the far end, so there's no trust-on-first-use step. A wrong `[hosts]` mapping can only make gitaway pin a key that doesn't match at home, which means using the tunnel there too: it fails safe.
 
 ## Away from home: the proxy
 
