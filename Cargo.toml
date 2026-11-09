@@ -1,0 +1,21 @@
+[package]
+name = "gitaway"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Reach your self-hosted git server from anywhere, with a tunnel only gitaway uses"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nikkel/gitaway"
+readme = "README.md"
+keywords = ["git", "wireguard", "self-hosted", "forgejo", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+
+[dependencies]
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
