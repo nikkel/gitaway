@@ -11,7 +11,7 @@
 //!
 //! [home]                            # how to tell you're on this LAN
 //! ssh = "192.0.2.10:2222"
-//! host_key = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
+//! host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
 //!
 //! [hosts]                           # LAN address -> address through the tunnel
 //! "192.0.2.10" = "10.0.0.1"
@@ -33,7 +33,7 @@ use crate::address::HostPort;
 use crate::git::remote_url::RemoteUrl;
 
 use super::name::ProfileName;
-use super::value::{Fingerprint, InterfaceAddress, WireGuardPublicKey};
+use super::value::{HostKey, InterfaceAddress, WireGuardPublicKey};
 
 /// The smallest MTU accepted. Anything lower can't carry a useful TCP segment.
 pub const MIN_MTU: u16 = 576;
@@ -84,8 +84,8 @@ pub struct WireGuard {
 pub struct Home {
     /// The SSH server to check. The port defaults to 22.
     pub ssh: HostPort,
-    /// The fingerprint that server's host key must have.
-    pub host_key: Fingerprint,
+    /// The public host key that server must prove it holds.
+    pub host_key: HostKey,
 }
 
 impl Home {
@@ -237,7 +237,7 @@ mod tests {
 
             [home]
             ssh = "192.0.2.10:2222"
-            host_key = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
+            host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
 
             [hosts]
             "192.0.2.10" = "10.0.0.1"
@@ -259,7 +259,7 @@ mod tests {
             r#"
             [home]
             ssh = "192.0.2.10"
-            host_key = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
+            host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
             "#,
         )
         .unwrap();
@@ -301,7 +301,7 @@ mod tests {
             ),
             ("tiny mtu", &format!("{TRANSPORT}mtu = 100")),
             (
-                "bad fingerprint",
+                "bad host key",
                 &format!("{TRANSPORT}\n[home]\nssh = \"192.0.2.10\"\nhost_key = \"abc\""),
             ),
             (

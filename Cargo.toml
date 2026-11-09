@@ -12,9 +12,11 @@ categories = ["command-line-utilities", "development-tools"]
 include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 
 [dependencies]
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+tokio = { version = "1", features = ["rt", "net", "time"] }
 toml = "1.2.1"
 toml_edit = "0.25.19"
 
@@ -24,3 +26,6 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "net", "time", "io-util"] }

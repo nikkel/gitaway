@@ -23,3 +23,4 @@
 pub mod address;
 pub mod config;
 pub mod git;
+pub mod home_check;

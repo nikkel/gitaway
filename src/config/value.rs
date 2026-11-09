@@ -2,12 +2,14 @@
 //!
 //! Each type checks its format when a profile is loaded, so a typo is
 //! reported straight away with the field it's in, rather than as a confusing
-//! failure when connecting. None of these are secrets: fingerprints and
-//! public keys are safe to print.
+//! failure when connecting. None of these are secrets: public keys are safe
+//! to print.
 
 use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
+
+use russh::keys::{Algorithm, HashAlg, PublicKey};
 
 /// A value in a profile didn't have the expected format.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -26,27 +28,78 @@ impl InvalidValue {
     }
 }
 
-/// An SSH host-key fingerprint in OpenSSH's format, `SHA256:<base64>`, as
-/// printed by `ssh-keygen -lf` or `ssh-keyscan host | ssh-keygen -lf -`.
+/// An SSH server's public host key, in OpenSSH's one-line format:
+/// `<type> <base64> [comment]`. That's what `ssh-keyscan` prints after the
+/// host name, and what a server's `/etc/ssh/ssh_host_*_key.pub` files hold.
+///
+/// The whole key is pinned, not just its fingerprint, because the key type
+/// matters: a server with several host keys presents whichever type the
+/// client asks for, so the home check asks for exactly this one.
 ///
 /// ```
-/// use gitaway::config::value::Fingerprint;
+/// use gitaway::config::value::HostKey;
 ///
-/// let fp: Fingerprint = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU".parse().unwrap();
-/// assert!("MD5:aa:bb".parse::<Fingerprint>().is_err());
+/// let key: HostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
+///     .parse()
+///     .unwrap();
+/// assert_eq!(key.fingerprint(), "SHA256:tAXFyTXI8xtDaujAEcwJslAYc9/6FKcUkd2Lw0xDhPo");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(try_from = "String")]
-pub struct Fingerprint(String);
+pub struct HostKey(PublicKey);
 
-impl FromStr for Fingerprint {
+impl HostKey {
+    /// The key's type, such as Ed25519.
+    pub fn algorithm(&self) -> Algorithm {
+        self.0.algorithm()
+    }
+
+    /// The SHA-256 fingerprint, formatted as `ssh-keygen -l` prints it, for
+    /// people to compare by eye.
+    pub fn fingerprint(&self) -> String {
+        self.0.fingerprint(HashAlg::Sha256).to_string()
+    }
+
+    /// Whether `key` is this key. Comments are ignored.
+    pub fn matches(&self, key: &PublicKey) -> bool {
+        self.0.key_data() == key.key_data()
+    }
+}
+
+impl From<PublicKey> for HostKey {
+    fn from(key: PublicKey) -> Self {
+        Self(key)
+    }
+}
+
+impl FromStr for HostKey {
     type Err = InvalidValue;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.strip_prefix("SHA256:")
-            .filter(|b64| is_base64_of_32_bytes(b64, false))
-            .map(|_| Self(s.to_owned()))
-            .ok_or_else(|| InvalidValue::new(s, "SHA256 host-key fingerprint (SHA256:...)"))
+        let invalid = || {
+            InvalidValue::new(
+                s,
+                "SSH host key (`ssh-ed25519 AAAA...` as printed by ssh-keyscan, without the host name)",
+            )
+        };
+        let key = PublicKey::from_openssh(s.trim()).map_err(|_| invalid())?;
+        match key.algorithm() {
+            Algorithm::Ed25519 | Algorithm::Ecdsa { .. } | Algorithm::Rsa { .. } => Ok(Self(key)),
+            _ => Err(invalid()),
+        }
+    }
+}
+
+impl TryFrom<String> for HostKey {
+    type Error = InvalidValue;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl fmt::Display for HostKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.to_openssh().map_err(|_| fmt::Error)?)
     }
 }
 
@@ -59,7 +112,7 @@ impl FromStr for WireGuardPublicKey {
     type Err = InvalidValue;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if is_base64_of_32_bytes(s, true) {
+        if is_base64_of_32_bytes(s) {
             Ok(Self(s.to_owned()))
         } else {
             Err(InvalidValue::new(
@@ -125,7 +178,7 @@ macro_rules! string_backed {
         }
     )*};
 }
-string_backed!(Fingerprint, WireGuardPublicKey);
+string_backed!(WireGuardPublicKey);
 
 impl TryFrom<String> for InterfaceAddress {
     type Error = InvalidValue;
@@ -134,17 +187,18 @@ impl TryFrom<String> for InterfaceAddress {
     }
 }
 
-/// Whether `s` is standard base64 encoding exactly 32 bytes: 43 characters,
-/// plus `=` if `padded`.
+/// Whether `s` is standard base64 encoding exactly 32 bytes: 43 characters
+/// and a final `=`.
 ///
 /// 32 bytes is 256 bits, but 43 base64 characters hold 258. The last
 /// character's two spare bits must be zero, which only these characters
 /// satisfy. Checking that rejects strings that are the right length but can't
 /// have come from a real key.
-fn is_base64_of_32_bytes(s: &str, padded: bool) -> bool {
+fn is_base64_of_32_bytes(s: &str) -> bool {
     const LAST_CHARS: &[u8] = b"AEIMQUYcgkosw048";
-    let body = if padded { s.strip_suffix('=') } else { Some(s) };
-    let Some(body) = body else { return false };
+    let Some(body) = s.strip_suffix('=') else {
+        return false;
+    };
     let bytes = body.as_bytes();
     bytes.len() == 43
         && bytes
@@ -157,25 +211,34 @@ fn is_base64_of_32_bytes(s: &str, padded: bool) -> bool {
 mod tests {
     use super::*;
 
-    // SHA-256 of the empty string, so a real digest with no meaning.
-    const FINGERPRINT: &str = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU";
+    /// The Ed25519 public key for an all-zero seed: a standard test vector.
+    pub(crate) const HOST_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop";
     // 32 zero bytes, base64-encoded.
     const PUBLIC_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
     #[test]
-    fn fingerprints() {
-        assert!(FINGERPRINT.parse::<Fingerprint>().is_ok());
+    fn host_keys() {
+        let key: HostKey = HOST_KEY.parse().unwrap();
+        assert_eq!(key.algorithm(), Algorithm::Ed25519);
+        assert_eq!(key.to_string(), HOST_KEY);
+
+        let with_comment: HostKey = format!("  {HOST_KEY} root@nas\n").parse().unwrap();
+        assert!(
+            with_comment.matches(&key.0),
+            "comment and whitespace are ignored"
+        );
+
         for bad in [
             "",
-            "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU",
-            "sha256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU",
-            "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
-            "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuF",
-            "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFV",
-            "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSu-U",
-            "MD5:16:27:ac:a5:76:28:2d:36:63:1b:56:4d:eb:df:a6:48",
+            "SHA256:tAXFyTXI8xtDaujAEcwJslAYc9/6FKcUkd2Lw0xDhPo",
+            &format!("192.0.2.10 {HOST_KEY}"),
+            "ssh-ed25519",
+            "ssh-ed25519 not-base64!",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdo",
+            "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop",
         ] {
-            assert!(bad.parse::<Fingerprint>().is_err(), "{bad}");
+            assert!(bad.parse::<HostKey>().is_err(), "{bad}");
         }
     }
 

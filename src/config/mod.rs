@@ -8,7 +8,7 @@
 //! - [`paths`] works out where the files live.
 //! - [`name`] defines which profile names are allowed.
 //! - [`profile`] defines the profile format and validates it.
-//! - [`value`] holds the validated value types profiles use (keys, fingerprints).
+//! - [`value`] holds the validated value types profiles use (host keys, WireGuard keys, addresses).
 //! - [`resolve`] picks the profile for a command.
 //! - [`store`] loads and saves the files, safely.
 //!
