@@ -67,6 +67,17 @@ pub enum TransportError {
         /// The profile's name.
         profile: String,
     },
+    /// The profile's server key is this device's own public key, a common
+    /// mix-up when copying keys from a client config.
+    #[error(
+        "profile `{profile}`'s server public key is this device's own public key. Set the \
+         server's key, the PublicKey under [Peer] in a client config: \
+         `gitaway profile set {profile} transport.wireguard.server_public_key <key>`"
+    )]
+    OwnKey {
+        /// The profile's name.
+        profile: String,
+    },
     /// The VPN server's address couldn't be looked up.
     #[error("couldn't find the VPN server {endpoint}: {reason}")]
     Endpoint {

@@ -888,6 +888,36 @@ mod keys {
     }
 
     #[test]
+    fn add_ends_with_the_peer_block_for_the_server() {
+        let env = Env::new();
+        let out = env
+            .gitaway()
+            .args([
+                "profile",
+                "add",
+                "home",
+                "--endpoint",
+                "vpn.example.net:51820",
+                "--server-public-key",
+                SERVER_KEY,
+                "--address",
+                "10.0.0.2/32",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let next = stdout.find("Next:").expect("a next step");
+        let block = &stdout[next..];
+        assert!(
+            block.contains(&format!("PublicKey = {}", peer_public_key(&env, "home"))),
+            "{stdout}"
+        );
+        assert!(block.contains("AllowedIPs = 10.0.0.2/32"), "{stdout}");
+        assert!(block.contains("gitaway key import home"), "{stdout}");
+    }
+
+    #[test]
     fn remove_deletes_the_key() {
         let env = Env::new();
         env.add_profile("home", &[]);

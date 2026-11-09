@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - `gitaway key import` uses a private key the server or a WireGuard app already made, read from stdin (the key alone or a whole client config). It refuses the server's own key and asks before replacing a key.
+- `gitaway profile add` ends by printing the `[Peer]` block for the server. The tunnel refuses a profile whose server key is this device's own key, a common mix-up, and says how to fix it.
 - The tunnel: away from home, network commands run git through a WireGuard tunnel inside gitaway (no system VPN, adapter or root), via a per-command proxy, so remote URLs, certificates, credential helpers and `known_hosts` are unchanged. `ssh://` and `https://` remotes are supported. Commands on the same profile take turns. If the tunnel fails, gitaway says whether the VPN server never answered or the server behind it didn't. When the VPN server's name has both kinds of address, IPv4 is used.
 - Profiles check that each `[hosts]` entry's tunnel side is an IP address, since names can't be looked up through the tunnel.
 - Device keys: `gitaway profile add` creates a WireGuard key for each profile, kept in the OS keychain (or a private file where there's none, or with `GITAWAY_KEY_STORE=file`). `gitaway peer` prints the `[Peer]` block for the server, and `gitaway key rotate` replaces the key.

@@ -189,7 +189,11 @@ pub(crate) fn warn_if_fallback(keys: &KeyStore, name: &ProfileName) {
 
 /// Prints the `[Peer]` block for the server, with guidance on stderr when
 /// the tunnel address isn't known yet.
-fn print_peer_block(name: &ProfileName, profile: &Profile, public_key: &WireGuardPublicKey) {
+pub(crate) fn print_peer_block(
+    name: &ProfileName,
+    profile: &Profile,
+    public_key: &WireGuardPublicKey,
+) {
     let Transport::WireGuard(wg) = &profile.transport;
     println!("[Peer]");
     println!("# gitaway profile `{name}`");

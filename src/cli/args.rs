@@ -128,7 +128,8 @@ pub struct AddArgs {
     /// The WireGuard server's public address, as host:port.
     #[arg(long)]
     pub endpoint: Option<String>,
-    /// The WireGuard server's public key.
+    /// The WireGuard server's public key. In a client config it's the
+    /// `PublicKey` under `[Peer]`, not the client's own public key.
     #[arg(long)]
     pub server_public_key: Option<String>,
     /// This device's tunnel address, such as 10.0.0.2/32, if already known.

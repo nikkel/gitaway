@@ -89,11 +89,11 @@ $ gitaway profile add home \
     --default
 ```
 
-The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel.
+The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. If you're copying from a WireGuard client config, the server's key is the `PublicKey` under `[Peer]`, not the client's own public key that apps show at the top. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel. If the git server runs on the WireGuard server itself, that's the WireGuard server's own tunnel address.
 
 This also creates the profile's own WireGuard key for this device, kept in your OS keychain.
 
-**3. Tell your WireGuard server about this device.**
+**3. Tell your WireGuard server about this device.** `profile add` ends by printing this block, and `gitaway peer` prints it again:
 
 ```console
 $ gitaway peer home

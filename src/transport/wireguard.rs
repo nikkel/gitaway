@@ -134,6 +134,11 @@ impl WireGuardTransport {
             .ok_or_else(|| TransportError::NoAddress {
                 profile: name.to_owned(),
             })?;
+        if key.public_key() == settings.server_public_key {
+            return Err(TransportError::OwnKey {
+                profile: name.to_owned(),
+            });
+        }
         let endpoint = resolve_endpoint(settings).await?;
         let mtu = settings.mtu.unwrap_or(DEFAULT_MTU);
         Self::start(address.ip, mtu, key, &settings.server_public_key, endpoint).await
@@ -450,6 +455,26 @@ mod tests {
         let second: SocketAddr = "[2001:db8::2]:51820".parse().unwrap();
         assert_eq!(pick_endpoint([first, second]), Some(first));
         assert_eq!(pick_endpoint([]), None);
+    }
+
+    #[test]
+    fn this_devices_own_key_as_the_server_key_is_refused_with_advice() {
+        runtime().block_on(async {
+            let key = DeviceKey::generate();
+            let settings = WireGuard {
+                endpoint: "vpn.example.net:51820".parse().unwrap(),
+                server_public_key: key.public_key(),
+                address: Some("10.0.0.2/32".parse().unwrap()),
+                mtu: None,
+            };
+            let error = WireGuardTransport::open("home", &settings, key)
+                .await
+                .err()
+                .unwrap();
+            let message = error.to_string();
+            assert!(matches!(error, TransportError::OwnKey { .. }), "{message}");
+            assert!(message.contains("gitaway profile set home"), "{message}");
+        });
     }
 
     #[test]

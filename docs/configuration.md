@@ -56,7 +56,7 @@ How to reach the place when you're away. A profile has exactly one transport tab
 | Setting | Required | Meaning |
 |---|---|---|
 | `endpoint` | yes | The WireGuard server's public address, as `host:port`. Usually a dynamic DNS name. |
-| `server_public_key` | yes | The server's public key: 44 base64 characters, as printed by `wg pubkey`. |
+| `server_public_key` | yes | The server's public key: 44 base64 characters, as printed by `wg pubkey`. In a client config, it's the `PublicKey` under `[Peer]`. |
 | `address` | for the tunnel | This device's address inside the tunnel, such as `10.0.0.2/32`. Often assigned by the server's admin after setup, so it can be added later; until then, gitaway can't use the tunnel and says how to add it. |
 | `mtu` | no | The tunnel MTU, at least 576. Leave it out unless the default causes trouble. |
 

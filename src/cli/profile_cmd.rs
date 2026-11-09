@@ -26,7 +26,7 @@ use crate::keys::device_key::DeviceKey;
 use crate::keys::store::KeyStore;
 
 use super::args::{AddArgs, ProfileCommand};
-use super::key_cmd::warn_if_fallback;
+use super::key_cmd::{print_peer_block, warn_if_fallback};
 use super::prompt;
 
 /// Runs a `gitaway profile` command.
@@ -69,7 +69,7 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     let server_public_key = prompt::required(
         args.server_public_key,
         "--server-public-key",
-        "WireGuard server's public key",
+        "WireGuard server's public key (in a client config: the PublicKey under [Peer])",
         |s| s.parse::<WireGuardPublicKey>().map_err(|e| e.to_string()),
     )?;
     let address = prompt::optional(
@@ -138,8 +138,8 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     };
     let keys = KeyStore::from_env(store.dir().clone())?;
     store.create_profile(&name, &build_profile(&new).to_string())?;
-    let key_message = match ensure_device_key(&keys, &name) {
-        Ok(message) => message,
+    let (key_message, public_key) = match ensure_device_key(&keys, &name) {
+        Ok(created) => created,
         Err(e) => {
             // Without a key the profile can't be used, so don't leave it half made.
             store.remove_profile(&name)?;
@@ -156,7 +156,6 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     );
     println!("{key_message}");
     warn_if_fallback(&keys, &name);
-    println!("Run `gitaway peer {name}` to see what to add to your WireGuard server.");
     if let Some((_, key)) = &new.home {
         println!(
             "Home host key fingerprint: {}\n  Compare it on the server with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub`.",
@@ -172,24 +171,34 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
             "No [hosts]: no remotes will use this profile. Add one with\n  gitaway profile set {name} 'hosts.\"192.0.2.10\"' 10.0.0.1"
         );
     }
+
+    println!(
+        "\nNext: add this device to your WireGuard server. The tunnel won't connect until\n\
+         the server has this peer. (If the server or a WireGuard app already made a key\n\
+         pair for this device, use `gitaway key import {name}` instead.)\n"
+    );
+    let profile = store.load_profile(&name)?;
+    print_peer_block(&name, &profile, &public_key);
     Ok(())
 }
 
 /// Creates the profile's device key, or keeps one left over from an earlier
 /// profile with the same name (the server may already know it). Returns a
-/// line saying which.
-fn ensure_device_key(keys: &KeyStore, name: &ProfileName) -> Result<String, Error> {
+/// line saying which, and the key's public half.
+fn ensure_device_key(
+    keys: &KeyStore,
+    name: &ProfileName,
+) -> Result<(String, WireGuardPublicKey), Error> {
     if let Some(existing) = keys.load(name)? {
-        return Ok(format!(
-            "Kept the existing device key for `{name}` (public key {}).",
-            existing.public_key()
-        ));
+        let public_key = existing.public_key();
+        let message =
+            format!("Kept the existing device key for `{name}` (public key {public_key}).");
+        return Ok((message, public_key));
     }
-    keys.save(name, &DeviceKey::generate())?;
-    Ok(format!(
-        "Created a device key, stored in {}.",
-        keys.location(name)
-    ))
+    let key = DeviceKey::generate();
+    keys.save(name, &key)?;
+    let message = format!("Created a device key, stored in {}.", keys.location(name));
+    Ok((message, key.public_key()))
 }
 
 /// Builds the profile file. Validation happens when the store saves it.
