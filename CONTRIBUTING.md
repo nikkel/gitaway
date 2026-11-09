@@ -18,7 +18,9 @@ $ cargo fmt --all
 $ cargo xtask man
 ```
 
-CI runs all of these on Linux and macOS (Windows is best-effort). It also runs the tests against git 2.34 and Apple's git, and scans for secrets. A pull request should pass them before review.
+CI runs all of these on Linux and macOS (Windows is best-effort). It also runs the tests against git 2.34 and Apple's git, runs an end-to-end test against a real Forgejo behind a real WireGuard server, and scans for secrets. A pull request should pass them before review.
+
+The end-to-end test needs Docker with Compose. Run it with `examples/home/e2e.sh` after `cargo build`; [`examples/home/`](examples/home/README.md) explains it.
 
 ## Where things live
 

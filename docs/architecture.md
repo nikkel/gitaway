@@ -117,6 +117,7 @@ The code is in `src/proxy/`: `socks.rs` (the protocol), `mod.rs` (the server and
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |
 | `tests/cli.rs` | End-to-end tests of the real binary, with a fake `git` and a test SSH server. |
 | `tests/proxy.rs` | Real git and ssh through the proxy and the real helper binary. |
+| `examples/home/` | A WireGuard server and Forgejo in Docker, and `e2e.sh`, which runs the real binary against them as a user would. Runs in CI. |
 
 Each module starts with a `//!` comment that explains its purpose, how it fits in and how to extend it. `cargo doc --open` shows them all.
 

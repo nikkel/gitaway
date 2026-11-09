@@ -1,0 +1,39 @@
+# A home network in two containers: a WireGuard server and a Forgejo forge
+# that shares its network, so the forge is at 10.0.0.1 inside the tunnel.
+#
+#   your machine ──UDP 127.0.0.1:51820──▶ wireguard (10.0.0.1)
+#                                            └─ forgejo: HTTP :3000, SSH :2222
+#
+# Forgejo's ports are also published on 127.0.0.1, which plays the part of
+# "on the home network". See README.md.
+name: gitaway-home
+
+services:
+  wireguard:
+    build: wireguard
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    volumes: [wireguard:/config]
+    ports:
+      - 127.0.0.1:51820:51820/udp
+      - 127.0.0.1:2222:2222
+      - 127.0.0.1:3000:3000
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15.0.11-rootless
+    network_mode: service:wireguard
+    environment:
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__server__ROOT_URL: http://192.0.2.10:3000/
+      FORGEJO__server__SSH_DOMAIN: 192.0.2.10
+      FORGEJO__server__SSH_PORT: "2222"
+      FORGEJO__server__SSH_LISTEN_PORT: "2222"
+      FORGEJO__server__START_SSH_SERVER: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+    volumes: [forgejo:/var/lib/gitea]
+    depends_on: [wireguard]
+
+volumes:
+  wireguard:
+  forgejo:

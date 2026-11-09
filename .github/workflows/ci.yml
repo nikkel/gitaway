@@ -80,6 +80,19 @@ jobs:
       - run: git --version
       - run: cargo test --all-targets
 
+  # The real binary against a real Forgejo behind a real WireGuard server,
+  # set up the way a user would. See examples/home/README.md.
+  e2e:
+    name: end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: shellcheck examples/home/e2e.sh examples/home/wireguard/*.sh
+      - run: cargo build
+      - run: examples/home/e2e.sh
+
   # Keeps the MSRV badge honest: the crate must build on rust-version.
   msrv:
     runs-on: ubuntu-latest
