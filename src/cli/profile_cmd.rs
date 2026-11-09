@@ -119,11 +119,10 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
         if let Some(tunnel) = prompt::optional(None, "--host", &question, |s| {
             s.parse::<HostPort>()
                 .map_err(|e| e.to_string())
-                .and_then(|t| {
-                    t.port
-                        .is_none()
-                        .then_some(t)
-                        .ok_or_else(|| "give a host without a port".to_owned())
+                .and_then(|t| match (t.port, t.host.parse::<std::net::IpAddr>()) {
+                    (None, Ok(_)) => Ok(t),
+                    (Some(_), _) => Err("give an address without a port".to_owned()),
+                    (None, Err(_)) => Err("give an IP address, such as 10.0.0.1".to_owned()),
                 })
         })? {
             hosts.push((lan, tunnel));

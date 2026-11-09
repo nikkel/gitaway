@@ -28,6 +28,7 @@
 //! break code that uses the library.
 
 use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
 
 use crate::address::HostPort;
 use crate::git::remote_url::RemoteUrl;
@@ -99,7 +100,8 @@ impl Home {
 ///
 /// Entries are either host to host (the port is kept), or `host:port` to
 /// `host:port`. Mixing the two in one entry is an error, as are two keys that
-/// mean the same thing (`Example.com` and `example.com`).
+/// mean the same thing (`Example.com` and `example.com`). The tunnel side
+/// must be an IP address: names can't be looked up through the tunnel.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(try_from = "BTreeMap<String, String>")]
 pub struct HostMap(BTreeMap<HostPort, HostPort>);
@@ -111,9 +113,48 @@ impl HostMap {
     /// Remotes this returns `false` for are run with plain git, with no home
     /// check.
     pub fn handles(&self, remote: &RemoteUrl) -> bool {
-        self.0.keys().any(|key| {
-            key.host == remote.host && key.port.is_none_or(|port| port == remote.effective_port())
-        })
+        self.route(&remote.host, remote.effective_port()).is_some()
+    }
+
+    /// Where `host:port` is reached through the tunnel, or `None` if this
+    /// profile doesn't handle it. A `host:port` entry wins over a host-only
+    /// entry for the same host. `host` is compared without regard to case,
+    /// and may be an IPv6 address with or without brackets.
+    ///
+    /// ```
+    /// use gitaway::config::profile::Profile;
+    ///
+    /// let profile = Profile::from_toml(r#"
+    ///     [transport.wireguard]
+    ///     endpoint = "vpn.example.net:51820"
+    ///     server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    ///     [hosts]
+    ///     "192.0.2.10" = "10.0.0.1"
+    /// "#).unwrap();
+    /// assert_eq!(profile.hosts.route("192.0.2.10", 2222), Some("10.0.0.1:2222".parse().unwrap()));
+    /// assert_eq!(profile.hosts.route("github.com", 22), None);
+    /// ```
+    pub fn route(&self, host: &str, port: u16) -> Option<SocketAddr> {
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host)
+            .to_ascii_lowercase();
+        let exact = self
+            .0
+            .iter()
+            .find(|(key, _)| key.host == host && key.port == Some(port));
+        let host_only = || {
+            self.0
+                .iter()
+                .find(|(key, _)| key.host == host && key.port.is_none())
+        };
+        let (_, tunnel) = exact.or_else(host_only)?;
+        let ip: IpAddr = tunnel
+            .host
+            .parse()
+            .expect("validated: the tunnel side is an IP");
+        Some(SocketAddr::new(ip, tunnel.port.unwrap_or(port)))
     }
 
     /// Whether there are no entries.
@@ -130,6 +171,11 @@ impl TryFrom<BTreeMap<String, String>> for HostMap {
         for (from, to) in raw {
             let from_addr: HostPort = from.parse().map_err(|e| format!("[hosts] key: {e}"))?;
             let to_addr: HostPort = to.parse().map_err(|e| format!("[hosts] `{from}`: {e}"))?;
+            if to_addr.host.parse::<IpAddr>().is_err() {
+                return Err(format!(
+                    "[hosts] `{from}` = `{to}`: the tunnel side must be an IP address, such as 10.0.0.1"
+                ));
+            }
             if from_addr.port.is_some() != to_addr.port.is_some() {
                 return Err(format!(
                     "[hosts] `{from}` = `{to}`: use host = host, or host:port = host:port"
@@ -322,6 +368,10 @@ mod tests {
                 "bad host",
                 &format!("{TRANSPORT}\n[hosts]\n\"-oProxyCommand=x\" = \"10.0.0.1\""),
             ),
+            (
+                "tunnel side is a name",
+                &format!("{TRANSPORT}\n[hosts]\n\"192.0.2.10\" = \"nas.example.net\""),
+            ),
         ];
         for (what, text) in cases {
             assert!(Profile::from_toml(text).is_err(), "{what} was accepted");
@@ -349,6 +399,29 @@ mod tests {
         );
         assert!(!handles("git@github.com:alice/app.git"));
         assert!(!handles("ssh://git@192.0.2.100/app.git"));
+    }
+
+    #[test]
+    fn routes_prefer_an_exact_port_and_keep_the_port_otherwise() {
+        let profile = with_transport(
+            r#"
+            [hosts]
+            "192.0.2.10" = "10.0.0.1"
+            "192.0.2.10:2222" = "10.0.0.5:22"
+            "git.example.com" = "10.0.0.2"
+            "[2001:db8::10]" = "[fd00::1]"
+            "#,
+        )
+        .unwrap();
+        let route = |host: &str, port: u16| profile.hosts.route(host, port).map(|a| a.to_string());
+
+        assert_eq!(route("192.0.2.10", 443).as_deref(), Some("10.0.0.1:443"));
+        assert_eq!(route("192.0.2.10", 2222).as_deref(), Some("10.0.0.5:22"));
+        assert_eq!(route("GIT.Example.com", 22).as_deref(), Some("10.0.0.2:22"));
+        assert_eq!(route("[2001:db8::10]", 22).as_deref(), Some("[fd00::1]:22"));
+        assert_eq!(route("2001:db8::10", 22).as_deref(), Some("[fd00::1]:22"));
+        assert_eq!(route("github.com", 22), None);
+        assert_eq!(route("192.0.2.100", 22), None);
     }
 
     #[test]

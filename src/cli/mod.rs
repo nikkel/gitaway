@@ -18,6 +18,10 @@
 //!
 //! `--profile` must come first, before any git options.
 //!
+//! `gitaway __proxy-connect <host> <port>` is an internal helper that ssh
+//! runs while gitaway's proxy is up (see [`crate::proxy::helper`]).
+//! It's handled before anything else and isn't listed in the help.
+//!
 //! # Extending
 //!
 //! A new gitaway command: add it to [`args::Command`], its name to
@@ -43,6 +47,7 @@ use crate::error::{EXIT_ERROR, Error};
 use crate::git::classify::{self, Kind};
 use crate::git::repo::Repo;
 use crate::git::runner::Git;
+use crate::proxy;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
@@ -90,6 +95,16 @@ pub fn main() -> i32 {
 /// the exit code for commands that finish here; commands that hand over to
 /// git don't return on Unix.
 pub fn run(args: Vec<OsString>) -> Result<i32, Error> {
+    if args
+        .first()
+        .is_some_and(|first| first == proxy::helper::COMMAND)
+    {
+        let helper_args: Vec<String> = args[1..]
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        return Ok(proxy::helper::run(&helper_args));
+    }
     let (profile_flag, args) = take_profile_flag(args)?;
 
     if args.is_empty() || matches_only(&args, &["-h", "--help"]) {

@@ -75,6 +75,28 @@ gitaway [--profile <name>] [git global options] <command> [args]
 
 The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection) means away, with the reason kept for the error message. The code is in `src/home_check.rs`.
 
+## Away from home: the proxy
+
+git's URLs are never rewritten. For one network command, gitaway starts a SOCKS5 proxy on `127.0.0.1` and points git at it through git's environment:
+
+```text
+ git ── https:// ─▶ http.proxy=socks5h://gitaway:<token>@127.0.0.1:<port>  ┐
+     ── ssh://   ─▶ GIT_SSH_COMMAND="<your ssh> -o ProxyCommand=…"           ├─▶ proxy
+                     (runs `gitaway __proxy-connect %h %p`)                   ┘     │
+                                                                                   ▼
+                       host:port in the profile's [hosts]? ── yes ─▶ Transport::connect(tunnel address)
+                                                           └─ no ──▶ direct, as git would connect
+```
+
+- Because git still sees the real host name, TLS certificates, credential helpers and `known_hosts` keep working.
+- Settings go in git's environment (`GIT_CONFIG_COUNT`), never its command line, which other users can read. Existing `GIT_CONFIG_COUNT` entries are kept.
+- The user's own ssh command is kept (`GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`, or `ssh`), with the `ProxyCommand` option added. Options on ssh's command line win over `~/.ssh/config`, so a `ProxyJump` there can't route around the tunnel. A test proves it.
+- The proxy only listens on loopback and needs a random 256-bit token that lives for one command. git would normally offer that proxy password to your credential helper to store, so gitaway sets an empty helper scoped to the proxy's URL. A test proves git does try to store it, and another that it doesn't with gitaway's setting.
+- `NO_PROXY` and `no_proxy` are removed from git's environment, so they can't send a home host around the proxy.
+- `git://` isn't covered: git runs `core.gitProxy` as a bare program, with no way to pass the helper's arguments.
+
+The code is in `src/proxy/`: `socks.rs` (the protocol), `mod.rs` (the server and routing), `helper.rs` (`__proxy-connect`) and `git_env.rs` (git's environment).
+
 ## Code map
 
 | Path | Responsibility |
@@ -84,11 +106,13 @@ The exchange is given 1 second. A match means home; anything else (a different k
 | `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies. |
 | `src/home_check.rs` | The home check. |
 | `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
+| `src/proxy/` | The per-command SOCKS5 proxy git talks to when away, and git's environment for it. |
 | `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, and a userspace TCP/IP stack (`netstack.rs`). See [adding a transport](adding-a-transport.md). |
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |
 | `tests/cli.rs` | End-to-end tests of the real binary, with a fake `git` and a test SSH server. |
+| `tests/proxy.rs` | Real git and ssh through the proxy and the real helper binary. |
 
 Each module starts with a `//!` comment that explains its purpose, how it fits in and how to extend it. `cargo doc --open` shows them all.
 

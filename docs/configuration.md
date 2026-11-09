@@ -96,7 +96,8 @@ Which remotes this profile handles, and (from the tunnel release) their addresse
 "192.0.2.11:2222" = "10.0.0.3:22"         # only port 2222, mapped to port 22
 ```
 
-- An entry is either host to host (the port is kept), or `host:port` to `host:port`. Mixing the two in one entry is an error.
+- An entry is either host to host (the port is kept), or `host:port` to `host:port`. Mixing the two in one entry is an error. If a host has both, the `host:port` entry wins for that port.
+- The tunnel side must be an IP address: names can't be looked up through the tunnel.
 - Hosts are compared without regard to case. IPv6 addresses go in brackets: `"[2001:db8::10]" = "10.0.0.1"`.
 - The host must be spelled the way your remote URL spells it. A remote that uses an alias from `~/.ssh/config` (`git@nas:alice/app.git`) only matches a key written as that alias.
 

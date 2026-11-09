@@ -183,6 +183,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 - No tunnel yet, so gitaway doesn't help away from home until the next release.
 - Remotes using an alias from `~/.ssh/config` only match a profile's `[hosts]` entry written with the same alias.
+- Away from home, only `ssh://` and `https://` (or `http://`) remotes go through the tunnel. `git://` remotes don't: git can't hand them to gitaway's proxy, and Forgejo and Gitea don't serve `git://` anyway.
 - HTTPS-only servers can't be home-checked yet: the check needs an SSH server on the home network.
 
 ## Documentation

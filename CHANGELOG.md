@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- Profiles check that each `[hosts]` entry's tunnel side is an IP address, since names can't be looked up through the tunnel.
 - Device keys: `gitaway profile add` creates a WireGuard key for each profile, kept in the OS keychain (or a private file where there's none, or with `GITAWAY_KEY_STORE=file`). `gitaway peer` prints the `[Peer]` block for the server, and `gitaway key rotate` replaces the key.
 - `gitaway` and `git-away` commands. Commands gitaway doesn't own are passed to git unchanged, with git's exit code.
 - Profiles: `gitaway profile add`, `list`, `show`, `default`, `set` and `remove`, and `gitaway use` to pin a repository to a profile.
