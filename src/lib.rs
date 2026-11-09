@@ -21,4 +21,5 @@
 //! See `docs/` in the repository for the architecture and contributor guides.
 
 pub mod address;
+pub mod config;
 pub mod git;
