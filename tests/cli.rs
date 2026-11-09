@@ -93,6 +93,7 @@ impl Env {
     }
 
     /// The git command lines gitaway ran, one per entry.
+    #[cfg(unix)]
     fn git_log(&self) -> Vec<String> {
         std::fs::read_to_string(self.path("git.log"))
             .unwrap_or_default()
