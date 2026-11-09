@@ -1,0 +1,84 @@
+.TH GITAWAY 1  "gitaway 0.0.0" "gitaway manual"
+.SH NAME
+gitaway, git\-away \- reach your self\-hosted git server from anywhere
+.SH SYNOPSIS
+\fBgitaway\fR [\-\-profile \fIname\fR] \fIcommand\fR [\fIargs\fR]
+.br
+\fBgit away\fR \fIcommand\fR [\fIargs\fR]
+.SH DESCRIPTION
+gitaway wraps git. At home it runs git directly. Away from home it will open a VPN tunnel that only gitaway uses, with no system\-wide VPN and no root. The tunnel isn't built yet: away from home, network commands stop with a clear reason.
+.PP
+gitaway's own commands are listed below. Every other command goes to the git on your PATH, unchanged, and gitaway exits with git's exit code.
+.PP
+Network commands (clone, fetch, pull, push, ls\-remote, remote update and submodule update) first choose a profile for the remote. If the profile handles the remote's host, gitaway checks whether you're on that profile's home network before running git.
+.PP
+The same program is installed as gitaway and git\-away. git runs any program named git\-<name> on your PATH for git <name>, so git away push and gitaway push do the same thing.
+.SH COMMANDS
+.TP
+\fBprofile\fR
+Add, list, show, change and remove profiles. See gitaway\-profile(1).
+.TP
+\fBuse\fR
+Pin the current repository to a profile. See gitaway\-use(1).
+.TP
+\fBpeer, key, list, tunnel\fR
+Reserved for later releases. They report that they aren't available yet.
+.TP
+\fBanything else\fR
+Passed to git unchanged.
+.SH OPTIONS
+.TP
+\fB\-\-profile name\fR
+Use this profile for a network command. It must come before any git options.
+.TP
+\fB\-h, \-\-help\fR
+Show a short help. git away \-\-help opens this page.
+.TP
+\fB\-\-version\fR
+Show gitaway's version.
+.PP
+git's global options, such as \-C dir and \-c key=value, may come before the command and are passed on to git.
+.SH PROFILES
+A profile is one place you connect to, such as a home or an office. Each is a TOML file in the profiles directory. For a network command, gitaway uses the first of:
+.IP 1. 4
+the \-\-profile option;
+.IP 2. 4
+the GITAWAY_PROFILE environment variable;
+.IP 3. 4
+git config gitaway.profile, which gitaway use and gitaway clone set;
+.IP 4. 4
+the only profile whose [hosts] lists the remote's host. If several do, the one whose home check passes; if that doesn't settle it, gitaway stops and asks you to run gitaway use;
+.IP 5. 4
+default_profile in config.toml.
+.PP
+If the chosen profile's [hosts] doesn't list the remote's host, the command goes to git without a home check. Pushing to a public forge is unaffected.
+.SH "HOME CHECK"
+gitaway connects to the SSH server in the profile's [home] section and asks it to prove it holds the pinned host_key, as a normal SSH connection does. Nothing logs in. If it proves it, you're home and git runs directly. A different key, no answer within about a second, or a refused connection all mean you're not home.
+.SH FILES
+.TP
+\fB$XDG_CONFIG_HOME/gitaway/config.toml\fR
+Settings that aren't per profile: default_profile. Without XDG_CONFIG_HOME, ~/.config is used.
+.TP
+\fB$XDG_CONFIG_HOME/gitaway/profiles/name.toml\fR
+One file per profile. Written with mode 600 in a directory with mode 700.
+.SH ENVIRONMENT
+.TP
+\fBGITAWAY_PROFILE\fR
+The profile to use, unless \-\-profile is given.
+.TP
+\fBXDG_CONFIG_HOME\fR
+Where the configuration directory lives.
+.SH "EXIT STATUS"
+For a command run by git, git's exit status. Otherwise 0 on success, 1 when gitaway reports an error, and 2 for a usage mistake in one of gitaway's own commands.
+.SH EXAMPLES
+.PP
+.nf
+.RS 4
+$ gitaway profile add home
+$ gitaway clone ssh://git@192.0.2.10:2222/alice/app.git
+$ cd app && git away push
+$ gitaway use office
+.RE
+.fi
+.SH "SEE ALSO"
+gitaway\-profile(1), gitaway\-use(1), git(1), ssh\-keyscan(1)

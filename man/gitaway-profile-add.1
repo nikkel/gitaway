@@ -1,0 +1,37 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH gitaway-profile-add 1  "gitaway 0.0.0" "gitaway manual"
+.SH NAME
+gitaway\-profile\-add \- Create a profile. Asks for anything not given as a flag
+.SH SYNOPSIS
+\fBgitaway profile add\fR [\fB\-\-endpoint\fR] [\fB\-\-server\-public\-key\fR] [\fB\-\-address\fR] [\fB\-\-home\-ssh\fR] [\fB\-\-host\-key\fR] [\fB\-\-host\fR] [\fB\-\-default\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+.SH DESCRIPTION
+Create a profile. Asks for anything not given as a flag
+.SH OPTIONS
+.TP
+\fB\-\-endpoint\fR \fI<ENDPOINT>\fR
+The WireGuard server\*(Aqs public address, as host:port
+.TP
+\fB\-\-server\-public\-key\fR \fI<SERVER_PUBLIC_KEY>\fR
+The WireGuard server\*(Aqs public key
+.TP
+\fB\-\-address\fR \fI<ADDRESS>\fR
+This device\*(Aqs tunnel address, such as 10.0.0.2/32, if already known
+.TP
+\fB\-\-home\-ssh\fR \fI<HOME_SSH>\fR
+The SSH server used to check you\*(Aqre home, as host:port
+.TP
+\fB\-\-host\-key\fR \fI<HOST_KEY>\fR
+That SSH server\*(Aqs public host key (one line of `ssh\-keyscan` output, without the host name)
+.TP
+\fB\-\-host\fR \fI<LAN=TUNNEL>\fR
+A server this profile handles, as LAN=TUNNEL (for example 192.0.2.10=10.0.0.1). Repeat for several
+.TP
+\fB\-\-default\fR
+Make this the default profile
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fINAME\fR]
+The profile\*(Aqs name: lower\-case letters, digits, `\-` and `_`
