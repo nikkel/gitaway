@@ -1,0 +1,167 @@
+//! The command line: decide what a command is, then hand it to the right
+//! place.
+//!
+//! ```text
+//! gitaway [--profile <name>] [git global options] <command> [args]
+//!
+//!   no command, -h, --help ─────────► gitaway's help
+//!   --version ──────────────────────► gitaway's version
+//!   profile, use ───────────────────► gitaway's own commands (clap)
+//!   peer, key, list, tunnel ────────► reserved: "not available yet"
+//!   network command (push, fetch …) ► network::plan, then git
+//!   anything else ──────────────────► git, exactly as typed
+//! ```
+//!
+//! clap only ever sees gitaway's own commands. Everything else is classified
+//! with [`crate::git::classify`], because clap would reject git's options
+//! (`-C dir`, `-c key=value`).
+//!
+//! `--profile` must come first, before any git options.
+//!
+//! # Extending
+//!
+//! A new gitaway command: add it to [`args::Command`], its name to
+//! [`OWN_COMMANDS`], and a module here that runs it. Remove it from
+//! [`RESERVED_COMMANDS`] if it was reserved.
+
+pub mod args;
+pub mod network;
+pub mod profile_cmd;
+pub mod prompt;
+pub mod use_cmd;
+
+use std::ffi::OsString;
+
+use clap::Parser;
+
+use crate::config::name::ProfileName;
+use crate::config::paths::ConfigDir;
+use crate::config::store::Store;
+use crate::error::{EXIT_ERROR, Error};
+use crate::git::classify::{self, Kind};
+use crate::git::runner::Git;
+
+/// gitaway's own commands. They take precedence over git aliases with the
+/// same name.
+pub const OWN_COMMANDS: &[&str] = &["profile", "use"];
+
+/// Commands planned for later milestones. They're claimed now, so a git
+/// alias with the same name doesn't silently change meaning when they land.
+pub const RESERVED_COMMANDS: &[&str] = &["peer", "key", "list", "tunnel"];
+
+const HELP: &str = "\
+gitaway: reach your self-hosted git server from anywhere
+
+Usage: gitaway [--profile <name>] <command> [args]
+
+gitaway's own commands:
+  profile    Add, list, show, change and remove profiles
+  use        Pin the current repository to a profile
+
+Every other command goes to git. Network commands (clone, fetch, pull, push,
+ls-remote, remote update, submodule update) first check whether you're at the
+remote's home network.
+
+Options:
+  --profile <name>   Use this profile (must come before any git options)
+  -h, --help         Show this help
+  --version          Show gitaway's version
+
+Run `gitaway <command> --help` for a command's options.";
+
+/// Runs gitaway with the process's arguments and returns the exit code.
+pub fn main() -> i32 {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    match run(args) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("gitaway: error: {e}");
+            EXIT_ERROR
+        }
+    }
+}
+
+/// Runs gitaway with the given arguments (without the program name). Returns
+/// the exit code for commands that finish here; commands that hand over to
+/// git don't return on Unix.
+pub fn run(args: Vec<OsString>) -> Result<i32, Error> {
+    let (profile_flag, args) = take_profile_flag(args)?;
+
+    if args.is_empty() || matches_only(&args, &["-h", "--help"]) {
+        println!("{HELP}");
+        return Ok(0);
+    }
+    if matches_only(&args, &["--version"]) {
+        println!("gitaway {}", env!("CARGO_PKG_VERSION"));
+        return Ok(0);
+    }
+
+    let invocation = classify::classify(&args);
+    match invocation.subcommand {
+        Some(command) if OWN_COMMANDS.contains(&command) => run_own_command(
+            &args[invocation.global_options.len()..],
+            invocation.global_options,
+        ),
+        Some(command) if RESERVED_COMMANDS.contains(&command) => Err(Error::msg(format!(
+            "`gitaway {command}` isn't available yet; it's planned for a later release"
+        ))),
+        _ if invocation.kind == Kind::Network => {
+            let git_args = network::plan(&invocation, profile_flag.as_ref())?;
+            Err(Git::new(&[]).exec(&git_args).into())
+        }
+        _ => {
+            if profile_flag.is_some() {
+                eprintln!("gitaway: note: --profile has no effect on local commands");
+            }
+            Err(Git::new(&[]).exec(&args).into())
+        }
+    }
+}
+
+/// The configuration store in the user's config directory.
+pub(crate) fn open_store() -> Result<Store, Error> {
+    Ok(Store::new(ConfigDir::from_env()?))
+}
+
+fn run_own_command(args: &[OsString], global_options: &[OsString]) -> Result<i32, Error> {
+    let cli = match args::Cli::try_parse_from(
+        std::iter::once(OsString::from("gitaway")).chain(args.iter().cloned()),
+    ) {
+        Ok(cli) => cli,
+        // Prints help or the usage error, and exits with clap's code.
+        Err(e) => e.exit(),
+    };
+    match cli.command {
+        args::Command::Profile(command) => profile_cmd::run(command),
+        args::Command::Use(command) => use_cmd::run(command, global_options),
+    }
+}
+
+/// Removes a leading `--profile <name>` or `--profile=<name>`.
+fn take_profile_flag(
+    mut args: Vec<OsString>,
+) -> Result<(Option<ProfileName>, Vec<OsString>), Error> {
+    let Some(first) = args.first().and_then(|a| a.to_str()) else {
+        return Ok((None, args));
+    };
+    let (value, consumed) = if first == "--profile" {
+        let value = args
+            .get(1)
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| Error::msg("--profile needs a profile name"))?;
+        (value.to_owned(), 2)
+    } else if let Some(value) = first.strip_prefix("--profile=") {
+        (value.to_owned(), 1)
+    } else {
+        return Ok((None, args));
+    };
+    let name = value
+        .parse()
+        .map_err(|e| Error::msg(format!("--profile: {e}")))?;
+    args.drain(..consumed);
+    Ok((Some(name), args))
+}
+
+fn matches_only(args: &[OsString], options: &[&str]) -> bool {
+    matches!(args, [only] if options.iter().any(|o| only == o))
+}

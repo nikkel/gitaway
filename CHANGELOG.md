@@ -6,4 +6,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- `gitaway` and `git-away` commands. Commands gitaway doesn't own are passed to git unchanged, with git's exit code.
+- Profiles: `gitaway profile add`, `list`, `show`, `default`, `set` and `remove`, and `gitaway use` to pin a repository to a profile.
+- Network commands (`clone`, `fetch`, `pull`, `push`, `ls-remote`, `remote update`, `submodule update`) check whether you're on the profile's home network by verifying its SSH server's pinned host key. Away from home they stop with a clear reason; the tunnel comes in a later release.
 - Project scaffolding: crate layout, CI (format, lint, test, MSRV and secret scan), contributing guide and security policy.

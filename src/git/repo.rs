@@ -79,6 +79,17 @@ impl Repo {
         }
     }
 
+    /// A URL as git will really use it, after `url.<base>.insteadOf`
+    /// rewrites. Doesn't touch the network.
+    pub fn expand_url(&self, url: &str) -> Result<String, RunError> {
+        let args = ["ls-remote", "--get-url", "--", url];
+        let out = self.git.capture(&args)?;
+        match out.code {
+            0 => Ok(out.stdout),
+            code => Err(failed(&args, code, out.stderr)),
+        }
+    }
+
     /// The remote a bare `git fetch` or `git push` would use, following git's
     /// own rules:
     ///
@@ -241,6 +252,23 @@ mod tests {
             Some("ssh://git@example.net/app.git")
         );
         assert_eq!(repo.remote_url("missing", Direction::Fetch).unwrap(), None);
+    }
+
+    #[test]
+    fn urls_are_expanded_with_insteadof() {
+        let (_dir, repo, git) = repo();
+        run(
+            &git,
+            &["config", "url.ssh://git@192.0.2.10:2222/.insteadOf", "lan:"],
+        );
+        assert_eq!(
+            repo.expand_url("lan:alice/app.git").unwrap(),
+            "ssh://git@192.0.2.10:2222/alice/app.git"
+        );
+        assert_eq!(
+            repo.expand_url("https://example.com/app.git").unwrap(),
+            "https://example.com/app.git"
+        );
     }
 
     #[test]

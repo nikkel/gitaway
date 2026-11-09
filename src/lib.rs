@@ -21,6 +21,8 @@
 //! See `docs/` in the repository for the architecture and contributor guides.
 
 pub mod address;
+pub mod cli;
 pub mod config;
+pub mod error;
 pub mod git;
 pub mod home_check;

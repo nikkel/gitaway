@@ -114,7 +114,10 @@ impl Store {
 
     /// Edits `config.toml`, keeping its comments and layout, and saves it if
     /// the result is valid. Creates the file if it doesn't exist.
-    pub fn update_global(&self, edit: impl FnOnce(&mut DocumentMut)) -> Result<(), StoreError> {
+    pub fn update_global(
+        &self,
+        edit: impl FnOnce(&mut DocumentMut) -> Result<(), String>,
+    ) -> Result<(), StoreError> {
         let path = self.dir.config_file();
         let text = read_optional(&path)?.unwrap_or_default();
         let new_text = apply_edit(&path, &text, edit)?;
@@ -178,11 +181,11 @@ impl Store {
     }
 
     /// Edits a profile, keeping its comments and layout, and saves it only if
-    /// the result is a valid profile.
+    /// `edit` succeeds and the result is a valid profile.
     pub fn update_profile(
         &self,
         name: &ProfileName,
-        edit: impl FnOnce(&mut DocumentMut),
+        edit: impl FnOnce(&mut DocumentMut) -> Result<(), String>,
     ) -> Result<(), StoreError> {
         let path = self.dir.profile_file(name);
         let text = read_optional(&path)?.ok_or_else(|| StoreError::NotFound(name.clone()))?;
@@ -217,11 +220,11 @@ fn profile_stem(path: &Path) -> Option<&str> {
 }
 
 /// Parses `text` as an editable TOML document, applies `edit`, and returns
-/// the new text.
+/// the new text. An `edit` that fails changes nothing.
 fn apply_edit(
     path: &Path,
     text: &str,
-    edit: impl FnOnce(&mut DocumentMut),
+    edit: impl FnOnce(&mut DocumentMut) -> Result<(), String>,
 ) -> Result<String, StoreError> {
     let mut doc: DocumentMut =
         text.parse()
@@ -229,7 +232,7 @@ fn apply_edit(
                 path: path.to_owned(),
                 source: ParseError::Invalid(e.to_string()),
             })?;
-    edit(&mut doc);
+    edit(&mut doc).map_err(|e| StoreError::InvalidEdit(ParseError::Invalid(e)))?;
     Ok(doc.to_string())
 }
 
@@ -336,6 +339,7 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         store
             .update_profile(&name("home"), |doc| {
                 doc["transport"]["wireguard"]["mtu"] = toml_edit::value(1420);
+                Ok(())
             })
             .unwrap();
 
@@ -355,6 +359,23 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
         let result = store.update_profile(&name("home"), |doc| {
             doc["transport"]["wireguard"]["endpoint"] = toml_edit::value("no port");
+            Ok(())
+        });
+
+        assert!(matches!(result, Err(StoreError::InvalidEdit(_))));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn failed_edits_change_nothing() {
+        let (_tmp, store) = store();
+        store.create_profile(&name("home"), PROFILE).unwrap();
+        let path = store.dir().profile_file(&name("home"));
+        let before = fs::read_to_string(&path).unwrap();
+
+        let result = store.update_profile(&name("home"), |doc| {
+            doc["transport"]["wireguard"]["mtu"] = toml_edit::value(1400);
+            Err("the edit gave up".to_owned())
         });
 
         assert!(matches!(result, Err(StoreError::InvalidEdit(_))));
@@ -365,14 +386,20 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     fn global_config_edits() {
         let (_tmp, store) = store();
         store
-            .update_global(|doc| doc["default_profile"] = toml_edit::value("home"))
+            .update_global(|doc| {
+                doc["default_profile"] = toml_edit::value("home");
+                Ok(())
+            })
             .unwrap();
         assert_eq!(
             store.load_global().unwrap().default_profile,
             Some(name("home"))
         );
 
-        let invalid = store.update_global(|doc| doc["default_profile"] = toml_edit::value("../x"));
+        let invalid = store.update_global(|doc| {
+            doc["default_profile"] = toml_edit::value("../x");
+            Ok(())
+        });
         assert!(matches!(invalid, Err(StoreError::InvalidEdit(_))));
         assert_eq!(
             store.load_global().unwrap().default_profile,
@@ -431,6 +458,7 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         store.create_profile(&name("home"), PROFILE).unwrap();
         let _ = store.update_profile(&name("home"), |doc| {
             doc["transport"]["wireguard"]["mtu"] = toml_edit::value(1400);
+            Ok(())
         });
         let files: Vec<_> = fs::read_dir(store.dir().profiles_dir())
             .unwrap()
