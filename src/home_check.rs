@@ -344,17 +344,17 @@ mod tests {
         });
     }
 
+    /// Only "away" is asserted, not which failure: a freed port can be handed
+    /// straight to a server in a parallel test, so the connection may be
+    /// refused or accepted and reset. Neither may ever count as home.
     #[test]
-    fn a_closed_port_is_away() {
+    fn a_port_with_nothing_listening_is_away() {
         runtime().block_on(async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             drop(listener);
             let verdict = verify(&home(port, &ed25519(1)), fast()).await;
-            assert!(
-                matches!(verdict, Verdict::Away(AwayReason::Unreachable(_))),
-                "{verdict:?}"
-            );
+            assert!(matches!(verdict, Verdict::Away(_)), "{verdict:?}");
         });
     }
 
