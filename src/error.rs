@@ -17,6 +17,7 @@ use crate::config::store::StoreError;
 use crate::git::runner::RunError;
 use crate::home_check::CheckError;
 use crate::keys::store::KeyError;
+use crate::transport::TransportError;
 
 /// The exit code for gitaway's own errors.
 pub const EXIT_ERROR: i32 = 1;
@@ -43,6 +44,9 @@ pub enum Error {
     /// A device key couldn't be read, saved or deleted.
     #[error(transparent)]
     Key(#[from] KeyError),
+    /// The tunnel couldn't be opened.
+    #[error(transparent)]
+    Transport(#[from] TransportError),
     /// Anything else, with a message for the user.
     #[error("{0}")]
     Other(String),

@@ -1,22 +1,20 @@
 //! What happens to a network command (clone, fetch, pull, push …).
 //!
-//! [`plan`] decides which git command to run, or refuses with a reason:
+//! [`plan`] decides how to run git:
 //!
 //! ```text
-//! no profiles configured ─────────────────────────► git as typed
+//! no profiles configured ─────────────────────────► Direct: git as typed
 //! find the remote URL ─► pick the profile (config::resolve)
 //!   no profile, unknown remote, or the profile's
-//!   [hosts] doesn't handle the remote's host ──────► git as typed
-//!   home check passes ─────────────────────────────► git as typed
-//!                                                     (clone also pins the profile)
-//!   home check fails ──────────────────────────────► error with the reason
-//!                                                     (milestone 2: tunnel)
+//!   [hosts] doesn't handle the remote's host ──────► Direct: git as typed
+//!   home check passes ─────────────────────────────► Direct (clone also pins the profile)
+//!   home check fails, or the profile has no [home] ► Away: through the tunnel (super::away)
 //! ```
 //!
-//! # Extending
-//!
-//! Milestone 2 replaces the "home check fails" error with opening a tunnel
-//! and returning a git command pointed at it.
+//! A different host key at the home address also means away: another
+//! network can have its own SSH server there. The tunnel is authenticated by
+//! WireGuard, so it's safe either way, and a note says the key may have
+//! changed in case you are home.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -26,7 +24,7 @@ use crate::config::profile::Profile;
 use crate::config::resolve::{self, Inputs};
 use crate::error::Error;
 use crate::git::classify::{Invocation, RemoteArg};
-use crate::git::remote_url;
+use crate::git::remote_url::{self, RemoteUrl};
 use crate::git::repo::{PROFILE_KEY, Repo};
 use crate::git::runner::{Git, RunError};
 use crate::home_check::{self, AwayReason, Verdict};
@@ -34,21 +32,46 @@ use crate::home_check::{self, AwayReason, Verdict};
 /// The environment variable that names a profile.
 pub const PROFILE_ENV: &str = "GITAWAY_PROFILE";
 
-/// Decides the git arguments to run for a network command, or why not.
+/// How to run a network command.
+#[derive(Debug)]
+pub enum Plan {
+    /// Run git with these arguments, directly.
+    Direct(Vec<OsString>),
+    /// Run git with these arguments through the profile's tunnel.
+    Away(Box<AwayPlan>),
+}
+
+/// Everything the away path needs.
+#[derive(Debug)]
+pub struct AwayPlan {
+    /// The git arguments, including global options.
+    pub args: Vec<OsString>,
+    /// git's global options alone, for gitaway's own git queries.
+    pub global_options: Vec<OsString>,
+    /// The profile's name.
+    pub name: ProfileName,
+    /// The profile.
+    pub profile: Profile,
+    /// The remote the command talks to.
+    pub remote: RemoteUrl,
+}
+
+/// Decides how to run a network command.
 ///
 /// `invocation` is the classified command line, and `profile_flag` the value
 /// of `--profile`, if given.
 pub fn plan(
     invocation: &Invocation<'_>,
     profile_flag: Option<&ProfileName>,
-) -> Result<Vec<OsString>, Error> {
+) -> Result<Plan, Error> {
     let as_typed = as_typed(invocation);
+    let direct = |args| Ok(Plan::Direct(args));
     let env_profile = env_profile()?;
 
     let store = super::open_store()?;
     let profiles = store.load_profiles()?;
     if profiles.is_empty() && profile_flag.is_none() && env_profile.is_none() {
-        return Ok(as_typed);
+        return direct(as_typed);
     }
     let global = store.load_global()?;
 
@@ -58,7 +81,7 @@ pub fn plan(
         // A lookup git itself refused (a bad `-C dir`, a broken config file)
         // fails the real command in exactly the same way, before any network
         // access. Let git report it, with its own message and exit code.
-        Err(RunError::Failed { .. }) => return Ok(as_typed),
+        Err(RunError::Failed { .. }) => return direct(as_typed),
         Err(e) => return Err(e.into()),
     };
     let git_config_profile = git_config_profile
@@ -86,22 +109,42 @@ pub fn plan(
     })?;
 
     let Some(resolved) = resolved else {
-        return Ok(as_typed);
+        return direct(as_typed);
     };
     let Some(remote) = remote else {
-        return Ok(as_typed);
+        return direct(as_typed);
     };
     if !resolved.profile.hosts.handles(&remote) {
-        return Ok(as_typed);
+        return direct(as_typed);
     }
 
     let verdict = match verdicts.remove(resolved.name) {
-        Some(verdict) => verdict,
-        None => home_verdict(resolved.name, resolved.profile)?,
+        Some(verdict) => Some(verdict),
+        None => home_verdict(resolved.profile)?,
     };
+    let args = pin_clone(invocation, resolved.name).unwrap_or(as_typed);
     match verdict {
-        Verdict::Home => Ok(pin_clone(invocation, resolved.name).unwrap_or(as_typed)),
-        Verdict::Away(reason) => Err(away_error(resolved.name, resolved.profile, &reason)),
+        Some(Verdict::Home) => direct(args),
+        Some(Verdict::Away(reason)) => {
+            if let AwayReason::WrongKey { fingerprint } = &reason {
+                wrong_key_note(resolved.name, resolved.profile, fingerprint);
+            }
+            Ok(Plan::Away(Box::new(AwayPlan {
+                args,
+                global_options: invocation.global_options.to_vec(),
+                name: resolved.name.clone(),
+                profile: resolved.profile.clone(),
+                remote,
+            })))
+        }
+        // No [home]: gitaway can't tell, so it always uses the tunnel.
+        None => Ok(Plan::Away(Box::new(AwayPlan {
+            args,
+            global_options: invocation.global_options.to_vec(),
+            name: resolved.name.clone(),
+            profile: resolved.profile.clone(),
+            remote,
+        }))),
     }
 }
 
@@ -154,16 +197,13 @@ fn remote_url_of(repo: &Repo, invocation: &Invocation<'_>) -> Result<Option<Stri
     Ok(url)
 }
 
-/// Runs the home check for a profile that will be used.
-fn home_verdict(name: &ProfileName, profile: &Profile) -> Result<Verdict, Error> {
-    let Some(home) = &profile.home else {
-        return Err(Error::msg(format!(
-            "profile `{name}` has no [home] section, so gitaway can't tell whether you're home.\n\
-             Add one with `gitaway profile set {name} home.ssh <host:port>` and \
-             `gitaway profile set {name} home.host_key '<key>'`"
-        )));
-    };
-    Ok(home_check::check(home)?)
+/// Runs the home check for a profile that will be used. `None` if the
+/// profile has no `[home]` to check.
+fn home_verdict(profile: &Profile) -> Result<Option<Verdict>, Error> {
+    match &profile.home {
+        Some(home) => Ok(Some(home_check::check(home)?)),
+        None => Ok(None),
+    }
 }
 
 /// The home check for choosing between several matching profiles. Profiles
@@ -190,21 +230,18 @@ fn pin_clone(invocation: &Invocation<'_>, name: &ProfileName) -> Option<Vec<OsSt
     Some(args)
 }
 
-fn away_error(name: &ProfileName, profile: &Profile, reason: &AwayReason) -> Error {
+/// The home address answered with a different key. Usually that's another
+/// network's server at the same address, but it can mean the home server's
+/// key changed, so say so.
+fn wrong_key_note(name: &ProfileName, profile: &Profile, fingerprint: &str) {
     let server = profile
         .home
         .as_ref()
         .map_or_else(|| "the home server".to_owned(), |home| home.ssh.to_string());
-    let message = match reason {
-        AwayReason::WrongKey { fingerprint } => format!(
-            "{server} answered with a different host key ({fingerprint}) than profile `{name}` expects.\n\
-             If you're home, the server's key may have changed: check it on the server, then update it with\n\
-             `gitaway profile set {name} home.host_key '<new key>'`"
-        ),
-        other => format!(
-            "not on the home network for profile `{name}` ({server}: {other}).\n\
-             Reaching it from elsewhere needs the tunnel, which isn't built yet"
-        ),
-    };
-    Error::msg(message)
+    eprintln!(
+        "gitaway: note: {server} answered with a different host key ({fingerprint}), so this \
+         isn't profile `{name}`'s home network. Using the tunnel.\n\
+         If you are home, the server's key may have changed: check it on the server, then update \
+         it with `gitaway profile set {name} home.host_key '<new key>'`"
+    );
 }

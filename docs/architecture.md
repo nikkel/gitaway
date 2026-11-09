@@ -53,7 +53,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 ├─ list, tunnel ──────────────────────▶ "not available yet" (reserved)
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
-│   remote update, submodule update)                           └─ not home ─▶ error with the reason
+│   remote update, submodule update)                           └─ not home ─▶ git through the tunnel
 └─ anything else ─────────────────────▶ git, exactly as typed
 ```
 
@@ -62,7 +62,9 @@ gitaway [--profile <name>] [git global options] <command> [args]
 - For a network command, gitaway asks git which remote URL the command will use (`git remote get-url`, `git ls-remote --get-url`), then picks a profile using the order in the [configuration reference](configuration.md#which-profile-is-used).
 - If the profile's `[hosts]` doesn't list the remote's host, git runs without a home check.
 - If one of gitaway's own git lookups fails (a bad `-C` folder, a broken config file), the command goes to git as typed. The real command fails the same way before touching the network, so the user sees git's own message and exit code.
-- On Linux and macOS, gitaway replaces itself with git (`exec`), so exit codes, signals and terminal behaviour are exactly git's. On Windows it runs git and waits.
+- At home, on Linux and macOS, gitaway replaces itself with git (`exec`), so exit codes, signals and terminal behaviour are exactly git's. On Windows it runs git and waits.
+- Away, gitaway must stay alive to run the tunnel, so it runs git as a child and waits (`src/cli/away.rs`). Ctrl+C reaches git directly (it's in the same process group) and gitaway waits for it to finish; a SIGTERM sent only to gitaway is passed on to git. Then the proxy and tunnel close and gitaway exits with git's code. A per-profile file lock (`src/config/lock.rs`) makes a second command on the same profile wait, because a WireGuard server keeps one session per device key.
+- A different host key at the home address means away, not an error: another network can have its own SSH server at that address. The tunnel is authenticated by WireGuard, so using it is safe, and a note says the key may have changed in case you are home.
 
 ## The home check
 
@@ -73,7 +75,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 3. The server signs the exchange with its host key. The SSH library (`russh`) checks that signature before gitaway sees the key, so a server that only knows the public key can't pass.
 4. Compare the key with the pinned `host_key`. The connection is closed without logging in.
 
-The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection) means away, with the reason kept for the error message. The code is in `src/home_check.rs`.
+The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection) means away. The code is in `src/home_check.rs`.
 
 ## Away from home: the proxy
 

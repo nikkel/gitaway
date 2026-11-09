@@ -8,7 +8,7 @@
 
 Reach your self-hosted git server from anywhere. At home, `gitaway` connects directly. Away from home, it opens a VPN tunnel that only gitaway itself uses: no system-wide VPN, no virtual network adapter, no root.
 
-> **Status:** early development, with no release yet. Working today: profiles, and checking whether you're at home before network commands. Away from home, network commands stop with a clear message. The tunnel is the next milestone.
+> **Status:** early development, with no release yet. Working today: profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes.
 
 ## Why
 
@@ -18,7 +18,7 @@ You run Forgejo, Gitea or plain git over SSH on a machine at home, and your repo
 - a mesh VPN such as Tailscale means installing and trusting a third-party service;
 - exposing the git server to the internet widens what attackers can reach.
 
-gitaway takes a narrower path. Keep your remotes as they are, and use `git away push` instead of `git push`. At home nothing changes. Away, only that one git command goes through a tunnel to your home WireGuard server (from the next release).
+gitaway takes a narrower path. Keep your remotes as they are, and use `git away push` instead of `git push`. At home nothing changes. Away, only that one git command goes through a tunnel to your home WireGuard server.
 
 ## How it works
 
@@ -34,12 +34,14 @@ git away push
      │ yes ─────────────────────────────────▶ run git directly
      │ no
      ▼
- away: open a WireGuard tunnel inside gitaway and point git at it   (next release)
+ away: open a WireGuard tunnel inside gitaway, run git through it,
+       close it when git finishes
 ```
 
 - **gitaway wraps your installed git.** Commands it doesn't own (`commit`, `log`, `status` …) go to git unchanged, and you get git's exit code. Your git config, credential helpers and SSH keys work as before.
 - **Home is checked by identity, not by address.** A café network might use the same addresses as your home, but it can't produce your server's private host key. The check takes a few milliseconds at home, and gives up within about a second elsewhere.
 - **Profiles** describe each place you connect to. A repository remembers its profile, and remotes that no profile handles, such as GitHub, are left alone.
+- **Away, git's URLs aren't changed.** gitaway runs a small proxy for that one command and points git at it, so certificates, credential helpers and `known_hosts` all keep working. Only the hosts listed in the profile go through the tunnel. The tunnel runs inside gitaway and closes when git finishes; nothing else on your machine is affected.
 
 ## Requirements
 
@@ -121,11 +123,10 @@ $ git away push
 
 A clone through gitaway remembers its profile. For a repository you cloned before, run `gitaway use home` inside it.
 
-Away from home, network commands currently stop with:
+Away from home, the same commands go through the tunnel. Nothing changes in how you use them. If the tunnel can't reach your server, gitaway says why after git's own error, for example:
 
 ```text
-gitaway: error: not on the home network for profile `home` (192.0.2.10:2222: …).
-Reaching it from elsewhere needs the tunnel, which isn't built yet
+gitaway: 192.0.2.10:2222: no answer from the VPN server at 198.51.100.7:51820 within 10 seconds. Check that the profile's server public key is right, that the server has this device's public key (`gitaway peer`), and that UDP port 51820 reaches it from here
 ```
 
 ## Commands
@@ -167,7 +168,8 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 ## Server side
 
 - **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec may count these as failed logins and eventually ban your laptop's address. Allowlist your home network in them. Each check is a single connection, so it rarely adds up, but a busy day of fetches can.
-- The tunnel will need a WireGuard server at home, reachable from the internet. Setup instructions come with that release.
+- **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device with the block `gitaway peer` prints.
+- **The git server must be reachable from the WireGuard server's side of the tunnel.** If WireGuard runs on the git server itself, use the server's tunnel address (such as `10.0.0.1`) in `[hosts]`. If it runs elsewhere on your network and forwards to it, you can map the host to its own LAN address: `"192.0.2.10" = "192.0.2.10"`.
 
 ## Security model
 
@@ -176,12 +178,12 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 - **Profiles hold no secrets.** They contain public keys and addresses.
 - **Each profile has its own device key**, a WireGuard private key kept in your OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux. On a machine without one, such as a headless server, it's kept in a file only you can read, and gitaway says so. Set `GITAWAY_KEY_STORE=file` to choose files. The key is never written to a profile, `~/.ssh`, logs, command lines or the environment, and only `gitaway key rotate` replaces it.
 - **git authentication is unchanged.** gitaway never sees your SSH keys, passwords or tokens. git and ssh handle them as usual.
+- **The tunnel lives inside gitaway, for one command.** No system VPN, network adapter, routes or root. The proxy git talks to listens only on `127.0.0.1` and needs a random token that changes every command. Only the profile's `[hosts]` go through the tunnel; anything else git contacts is connected directly, as git would. Two commands using the same profile take turns, because a WireGuard server keeps one session per device.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Limitations
 
-- No tunnel yet, so gitaway doesn't help away from home until the next release.
 - Remotes using an alias from `~/.ssh/config` only match a profile's `[hosts]` entry written with the same alias.
 - Away from home, only `ssh://` and `https://` (or `http://`) remotes go through the tunnel. `git://` remotes don't: git can't hand them to gitaway's proxy, and Forgejo and Gitea don't serve `git://` anyway.
 - HTTPS-only servers can't be home-checked yet: the check needs an SSH server on the home network.

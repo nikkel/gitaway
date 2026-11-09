@@ -18,7 +18,6 @@ use gitaway::proxy::Proxy;
 use gitaway::proxy::git_env::{self, SshSettings};
 use gitaway::transport::{ConnectFuture, Stream, Transport, TransportError};
 use tempfile::TempDir;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Connects "through the tunnel" to 127.0.0.1 on the target's port, and
 /// records each target.
@@ -168,31 +167,6 @@ fn ssh_reaches_the_server_through_the_tunnel_despite_a_proxyjump() {
     });
 }
 
-/// A minimal HTTP server answering every request with 200 and an empty
-/// body, which git reads as an empty repository. Returns its port.
-async fn empty_http_server() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                let mut request = Vec::new();
-                let mut buf = [0; 1024];
-                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match stream.read(&mut buf).await {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => request.extend_from_slice(&buf[..n]),
-                    }
-                }
-                let _ = stream
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .await;
-            });
-        }
-    });
-    port
-}
-
 #[test]
 fn http_goes_through_the_tunnel_and_the_proxy_password_is_never_stored() {
     let sandbox = Sandbox::new();
@@ -208,7 +182,7 @@ fn http_goes_through_the_tunnel_and_the_proxy_password_is_never_stored() {
     )
     .unwrap();
     runtime().block_on(async {
-        let port = empty_http_server().await;
+        let port = common::empty_http_server().await;
         let transport = Arc::new(Loopback::default());
         let proxy = Proxy::start(transport.clone(), home_hosts()).await.unwrap();
         let mut git = sandbox.git();
@@ -249,7 +223,7 @@ fn without_the_scoped_helper_git_would_store_the_proxy_password() {
     )
     .unwrap();
     runtime().block_on(async {
-        let port = empty_http_server().await;
+        let port = common::empty_http_server().await;
         let transport = Arc::new(Loopback::default());
         let proxy = Proxy::start(transport, home_hosts()).await.unwrap();
         let mut git = sandbox.git();

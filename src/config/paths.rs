@@ -89,6 +89,12 @@ impl ConfigDir {
     pub fn key_file(&self, name: &ProfileName) -> PathBuf {
         self.keys_dir().join(format!("{name}.key"))
     }
+
+    /// The lock file that stops two commands using one profile's tunnel at
+    /// once.
+    pub fn lock_file(&self, name: &ProfileName) -> PathBuf {
+        self.root.join("locks").join(format!("{name}.lock"))
+    }
 }
 
 #[cfg(test)]

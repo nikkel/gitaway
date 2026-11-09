@@ -132,6 +132,12 @@ impl Repo {
     }
 
     /// `git config --get <key>`. Exit code 1 means the key isn't set.
+    /// `core.sshCommand`, if set, including any `-c core.sshCommand=…`
+    /// typed before the command.
+    pub fn ssh_command(&self) -> Result<Option<String>, RunError> {
+        self.config_get("core.sshCommand")
+    }
+
     fn config_get(&self, key: &str) -> Result<Option<String>, RunError> {
         let args = ["config", "--get", key];
         let out = self.git.capture(&args)?;

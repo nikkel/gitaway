@@ -1304,6 +1304,7 @@ dependencies = [
  "keyring",
  "predicates",
  "russh",
+ "rustix",
  "serde",
  "smoltcp",
  "tempfile",

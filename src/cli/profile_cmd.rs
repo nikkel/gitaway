@@ -164,7 +164,7 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
         );
     } else {
         println!(
-            "No [home] section: gitaway can't tell when you're home, so it will refuse network commands for this profile."
+            "No [home] section: gitaway can't tell when you're home, so it will always use the tunnel for this profile."
         );
     }
     if new.hosts.is_empty() {

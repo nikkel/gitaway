@@ -13,10 +13,9 @@
 //! - [`Git::capture`] runs a query and returns its output, for gitaway's own
 //!   use (reading `gitaway.profile`, remote URLs and so on).
 //!
-//! # Extending
-//!
-//! Milestone 2 adds a spawn-and-wait mode, so a tunnel can be torn down after
-//! git exits. Use [`exit_code`] to turn git's status into gitaway's exit code.
+//! Away from home, git can't be exec'd: gitaway has to keep the tunnel
+//! running while git works. `cli::away` spawns git from [`Git::command`]
+//! instead, waits, and uses [`exit_code`] to return git's exit code.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -151,7 +150,7 @@ pub fn exit_code(status: ExitStatus) -> i32 {
     1
 }
 
-fn spawn_error(e: io::Error) -> RunError {
+pub(crate) fn spawn_error(e: io::Error) -> RunError {
     if e.kind() == io::ErrorKind::NotFound {
         RunError::NotFound
     } else {

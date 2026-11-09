@@ -51,20 +51,20 @@ host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJD
 
 ### `[transport.wireguard]`
 
-How to reach the place when you're away. The tunnel itself arrives in a later release, but the settings are already required and checked. A profile has exactly one transport table.
+How to reach the place when you're away. A profile has exactly one transport table.
 
 | Setting | Required | Meaning |
 |---|---|---|
 | `endpoint` | yes | The WireGuard server's public address, as `host:port`. Usually a dynamic DNS name. |
 | `server_public_key` | yes | The server's public key: 44 base64 characters, as printed by `wg pubkey`. |
-| `address` | no | This device's address inside the tunnel, such as `10.0.0.2/32`. Often assigned by the server's admin after setup, so it can be added later. |
+| `address` | for the tunnel | This device's address inside the tunnel, such as `10.0.0.2/32`. Often assigned by the server's admin after setup, so it can be added later; until then, gitaway can't use the tunnel and says how to add it. |
 | `mtu` | no | The tunnel MTU, at least 576. Leave it out unless the default causes trouble. |
 
 The device's private key is never stored in a profile. See [Device keys](#device-keys).
 
 ### `[home]`
 
-How gitaway tells that you're on this place's own network. Without it, gitaway can't tell, and network commands for this profile stop with an error that says how to add it.
+How gitaway tells that you're on this place's own network. Without it, gitaway can't tell, so it always uses the tunnel.
 
 | Setting | Required | Meaning |
 |---|---|---|
@@ -87,7 +87,7 @@ How the check works is described in the [architecture guide](architecture.md#the
 
 ### `[hosts]`
 
-Which remotes this profile handles, and (from the tunnel release) their addresses through the tunnel. Each key is a host as it appears in your remote URLs; each value is where to reach it through the tunnel.
+Which remotes this profile handles, and their addresses through the tunnel. Each key is a host as it appears in your remote URLs; each value is where to reach it through the tunnel.
 
 ```toml
 [hosts]
@@ -97,6 +97,7 @@ Which remotes this profile handles, and (from the tunnel release) their addresse
 ```
 
 - An entry is either host to host (the port is kept), or `host:port` to `host:port`. Mixing the two in one entry is an error. If a host has both, the `host:port` entry wins for that port.
+- The tunnel side is where the VPN server can reach your git server. If both run on the same machine, that's the VPN server's own tunnel address (the `Address` in its WireGuard config, such as `10.0.0.1`). If the VPN server forwards traffic to your home network, the git server's home address works too (`"192.0.2.10" = "192.0.2.10"`). Your remote URLs keep using the home address either way.
 - The tunnel side must be an IP address: names can't be looked up through the tunnel.
 - Hosts are compared without regard to case. IPv6 addresses go in brackets: `"[2001:db8::10]" = "10.0.0.1"`.
 - The host must be spelled the way your remote URL spells it. A remote that uses an alias from `~/.ssh/config` (`git@nas:alice/app.git`) only matches a key written as that alias.

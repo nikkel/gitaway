@@ -189,7 +189,9 @@ async fn open(
     if let Some(tunnel_address) = routes.hosts.route(&target.host, target.port) {
         return routes.transport.connect(tunnel_address).await.map_err(|e| {
             let reply = match &e {
-                TransportError::Timeout { .. } => Reply::TimedOut,
+                TransportError::Timeout { .. } | TransportError::NoHandshake { .. } => {
+                    Reply::TimedOut
+                }
                 TransportError::Connect { source, .. }
                     if source.kind() == io::ErrorKind::ConnectionRefused =>
                 {

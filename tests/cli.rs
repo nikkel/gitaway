@@ -41,7 +41,12 @@ impl Env {
 
     /// `gitaway` with an isolated environment.
     fn gitaway(&self) -> Command {
-        let mut cmd = Command::cargo_bin("gitaway").unwrap();
+        Command::from_std(self.gitaway_std())
+    }
+
+    /// The same, as a plain `std` command, for tests that need its process.
+    fn gitaway_std(&self) -> StdCommand {
+        let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_gitaway"));
         let path = format!(
             "{}:{}",
             self.path("bin").display(),
@@ -119,6 +124,39 @@ impl Env {
     /// The device key file for a profile.
     fn key_file(&self, name: &str) -> PathBuf {
         self.path(&format!("config/gitaway/keys/{name}.key"))
+    }
+
+    /// Creates a profile whose WireGuard server has the public key `server`.
+    fn add_profile_with_server(&self, name: &str, server: &str, extra: &[&str]) {
+        self.gitaway()
+            .args([
+                "profile",
+                "add",
+                name,
+                "--endpoint",
+                "127.0.0.1:9",
+                "--server-public-key",
+                server,
+            ])
+            .args(extra)
+            .assert()
+            .success();
+    }
+
+    /// The device's WireGuard public key for a profile, from `gitaway peer`.
+    fn device_public_key(&self, name: &str) -> String {
+        let out = self.gitaway().args(["peer", name]).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("PublicKey = "))
+            .expect("peer prints a PublicKey")
+            .to_owned()
     }
 
     /// Creates a profile with `gitaway profile add`, using flags only.
@@ -432,7 +470,7 @@ mod network {
         );
     }
 
-    fn ran(env: &Env, needle: &str) -> bool {
+    pub(super) fn ran(env: &Env, needle: &str) -> bool {
         env.git_log().iter().any(|line| line.contains(needle))
     }
 
@@ -451,22 +489,26 @@ mod network {
     }
 
     #[test]
-    fn a_different_host_key_refuses_and_says_so() {
+    fn a_different_host_key_means_away_and_says_so() {
         let env = Env::new();
         let (port, _) = ssh_server(1);
         home_profile(&env, "home", port, HOST_KEY);
         env.repo("app", REMOTE);
 
+        // Away, so it tries the tunnel: this profile has no tunnel address.
         env.gitaway()
             .args(["-C", "app", "fetch"])
             .assert()
             .code(1)
-            .stderr(predicate::str::contains("different host key"));
+            .stderr(
+                predicate::str::contains("different host key")
+                    .and(predicate::str::contains("has no tunnel address")),
+            );
         assert!(!ran(&env, "-C app fetch"), "{:?}", env.git_log());
     }
 
     #[test]
-    fn away_refuses_with_the_reason() {
+    fn away_without_a_tunnel_address_says_how_to_add_one() {
         let env = Env::new();
         // Documentation address: nothing answers.
         env.add_profile(
@@ -487,7 +529,7 @@ mod network {
             .assert()
             .code(1)
             .stderr(predicate::str::contains(
-                "not on the home network for profile `home`",
+                "gitaway profile set home transport.wireguard.address",
             ));
         assert!(!ran(&env, "-C app push"));
     }
@@ -619,7 +661,7 @@ mod network {
     }
 
     #[test]
-    fn a_profile_without_home_refuses_handled_remotes() {
+    fn a_profile_without_home_always_uses_the_tunnel() {
         let env = Env::new();
         env.add_profile("home", &["--host", "127.0.0.1=10.0.0.1"]);
         env.repo("app", REMOTE);
@@ -627,7 +669,8 @@ mod network {
             .args(["-C", "app", "fetch"])
             .assert()
             .code(1)
-            .stderr(predicate::str::contains("no [home] section"));
+            .stderr(predicate::str::contains("has no tunnel address"));
+        assert!(!ran(&env, "-C app fetch"));
     }
 }
 
@@ -833,5 +876,200 @@ mod keys {
             .code(1)
             .stderr(predicate::str::contains("GITAWAY_KEY_STORE"));
         assert!(!env.path("config/gitaway/profiles/home.toml").exists());
+    }
+}
+
+mod away {
+    use super::*;
+    use common::{DEVICE_TUNNEL_ADDRESS, home_server, ssh_server};
+    use gitaway::keys::device_key::DeviceKey;
+    use network::ran;
+
+    /// A port on 127.0.0.1 with nothing listening, for a home check that
+    /// fails at once.
+    fn closed_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    /// A profile `home` whose home check fails (so gitaway is away), with a
+    /// real WireGuard server forwarding `ports`. 192.0.2.10 (unreachable
+    /// otherwise) maps to the server's side of the tunnel.
+    fn away_profile(env: &Env, ports: &[u16]) {
+        let server_key = DeviceKey::generate();
+        let server_public = server_key.public_key().to_string();
+        env.add_profile_with_server(
+            "home",
+            &server_public,
+            &[
+                "--address",
+                &format!("{DEVICE_TUNNEL_ADDRESS}/32"),
+                "--home-ssh",
+                &format!("127.0.0.1:{}", closed_port()),
+                "--host-key",
+                HOST_KEY,
+                "--host",
+                "192.0.2.10=10.0.0.1",
+            ],
+        );
+        let device = env.device_public_key("home");
+        let server = home_server(server_key, &device.parse().unwrap(), ports);
+        env.gitaway()
+            .args([
+                "profile",
+                "set",
+                "home",
+                "transport.wireguard.endpoint",
+                &format!("127.0.0.1:{}", server.udp_port),
+            ])
+            .assert()
+            .success();
+    }
+
+    fn http_server() -> u16 {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                tx.send(common::empty_http_server().await).unwrap();
+                std::future::pending::<()>().await;
+            });
+        });
+        rx.recv().unwrap()
+    }
+
+    #[test]
+    fn https_style_remotes_work_through_a_real_wireguard_tunnel() {
+        let env = Env::new();
+        let port = http_server();
+        away_profile(&env, &[port]);
+        env.gitaway()
+            .args(["ls-remote", &format!("http://192.0.2.10:{port}/app.git")])
+            .assert()
+            .success();
+        assert!(
+            ran(&env, "ls-remote http://192.0.2.10"),
+            "{:?}",
+            env.git_log()
+        );
+    }
+
+    #[test]
+    fn ssh_goes_through_the_tunnel_and_gits_exit_code_comes_back() {
+        let env = Env::new();
+        let (port, _) = ssh_server(9);
+        away_profile(&env, &[port]);
+        env.gitaway()
+            .args(["ls-remote", &format!("ssh://git@192.0.2.10:{port}/app.git")])
+            .env(
+                "GIT_SSH_COMMAND",
+                "ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=no \
+                 -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null",
+            )
+            .assert()
+            // The test server allows no logins; being refused one proves ssh
+            // reached it, which it could only do through the tunnel.
+            .code(128)
+            .stderr(predicate::str::contains("Permission denied"));
+    }
+
+    #[test]
+    fn a_tunnel_failure_is_explained_after_git_fails() {
+        let env = Env::new();
+        // The server forwards nothing, so connections through it are refused.
+        away_profile(&env, &[]);
+        env.gitaway()
+            .args(["ls-remote", "http://192.0.2.10:3000/app.git"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "gitaway: 192.0.2.10:3000: couldn't connect to 10.0.0.1:3000 through the tunnel",
+            ));
+    }
+
+    #[test]
+    fn git_protocol_remotes_are_refused_with_advice() {
+        let env = Env::new();
+        away_profile(&env, &[]);
+        env.gitaway()
+            .args(["ls-remote", "git://192.0.2.10/app.git"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "git:// remotes can't go through the tunnel",
+            ));
+        assert!(!ran(&env, "ls-remote git://"), "{:?}", env.git_log());
+    }
+
+    /// A lone SIGINT (the terminal sends it to git as well) doesn't make
+    /// gitaway abandon a running git; a SIGTERM to gitaway reaches git, and
+    /// gitaway exits with git's code for it.
+    #[cfg(unix)]
+    #[test]
+    fn signals_reach_git_and_gitaway_waits_for_it() {
+        use std::time::{Duration, Instant};
+        let env = Env::new();
+        away_profile(&env, &[]);
+        let marker = env.path("ssh-started");
+        // An "ssh" that never connects: it records that it started, then waits.
+        let slow_ssh = format!("touch '{}'; sleep 30; true", marker.display());
+        let mut child = env
+            .gitaway_std()
+            .args(["ls-remote", "ssh://git@192.0.2.10:2222/app.git"])
+            .env("GIT_SSH_COMMAND", &slow_ssh)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id().to_string();
+        let signal = |name: &str| {
+            let status = StdCommand::new("kill").args([name, &pid]).status().unwrap();
+            assert!(status.success());
+        };
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "git never started ssh");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        signal("-INT");
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "gitaway left git running alone"
+        );
+
+        signal("-TERM");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "gitaway didn't stop after SIGTERM"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        // git died from the forwarded SIGTERM: 128 + 15.
+        assert_eq!(status.code(), Some(143));
+    }
+
+    #[test]
+    fn a_missing_device_key_says_how_to_make_one() {
+        let env = Env::new();
+        away_profile(&env, &[]);
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args(["ls-remote", "http://192.0.2.10:3000/app.git"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("gitaway key rotate home"));
     }
 }

@@ -8,7 +8,8 @@
 //!   --version ──────────────────────► gitaway's version
 //!   profile, use, peer, key ────────► gitaway's own commands (clap)
 //!   list, tunnel ───────────────────► reserved: "not available yet"
-//!   network command (push, fetch …) ► network::plan, then git
+//!   network command (push, fetch …) ► network::plan, then git directly,
+//!                                     or through the tunnel (away)
 //!   anything else ──────────────────► git, exactly as typed
 //! ```
 //!
@@ -29,6 +30,7 @@
 //! [`RESERVED_COMMANDS`] if it was reserved.
 
 pub mod args;
+pub mod away;
 pub mod key_cmd;
 pub mod network;
 pub mod profile_cmd;
@@ -127,8 +129,10 @@ pub fn run(args: Vec<OsString>) -> Result<i32, Error> {
             "`gitaway {command}` isn't available yet; it's planned for a later release"
         ))),
         _ if invocation.kind == Kind::Network => {
-            let git_args = network::plan(&invocation, profile_flag.as_ref())?;
-            Err(Git::new(&[]).exec(&git_args).into())
+            match network::plan(&invocation, profile_flag.as_ref())? {
+                network::Plan::Direct(git_args) => Err(Git::new(&[]).exec(&git_args).into()),
+                network::Plan::Away(plan) => away::run(*plan),
+            }
         }
         _ => {
             if profile_flag.is_some() {

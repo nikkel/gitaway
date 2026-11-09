@@ -78,10 +78,24 @@ pub enum TransportError {
     /// The tunnel couldn't be started on this machine.
     #[error("couldn't start the tunnel: {0}")]
     Setup(String),
-    /// No answer through the tunnel in time.
+    /// The VPN server never completed a handshake, so nothing could cross
+    /// the tunnel.
     #[error(
-        "no answer from {target} through the tunnel within {} seconds. Check that the VPN \
-         server is reachable and has this device's public key (`gitaway peer`)",
+        "no answer from the VPN server at {endpoint} within {} seconds. Check that the \
+         profile's server public key is right, that the server has this device's public key \
+         (`gitaway peer`), and that UDP port {} reaches it from here",
+        CONNECT_TIMEOUT.as_secs(),
+        endpoint.port()
+    )]
+    NoHandshake {
+        /// The server's address, as looked up.
+        endpoint: SocketAddr,
+    },
+    /// The tunnel is up, but nothing answered at the address inside it.
+    #[error(
+        "the VPN server answered, but {target} didn't within {} seconds. Check that the \
+         server can reach {target} (the right-hand side of the profile's `[hosts]` entry) \
+         and allows this device to reach it",
         CONNECT_TIMEOUT.as_secs()
     )]
     Timeout {

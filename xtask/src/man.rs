@@ -126,10 +126,9 @@ fn main_page() -> String {
 
     page.section("DESCRIPTION");
     page.text(
-        "gitaway wraps git. At home it runs git directly. Away from home it will \
-         open a VPN tunnel that only gitaway uses, with no system-wide VPN and no \
-         root. The tunnel isn't built yet: away from home, network commands stop \
-         with a clear reason.",
+        "gitaway wraps git. At home it runs git directly. Away from home it opens \
+         a WireGuard tunnel inside gitaway, with no system-wide VPN and no root, \
+         runs git through it, and closes it when git finishes.",
     );
     page.para(
         "gitaway's own commands are listed below. Every other command goes to the \
@@ -209,6 +208,19 @@ fn main_page() -> String {
          does. Nothing logs in. If it proves it, you're home and git runs \
          directly. A different key, no answer within about a second, or a refused \
          connection all mean you're not home.",
+    );
+
+    page.section("AWAY FROM HOME");
+    page.text(
+        "gitaway opens the profile's WireGuard tunnel inside its own process, starts a \
+         proxy on 127.0.0.1 for this one command, and runs git pointed at it: ssh \
+         through a ProxyCommand, http and https through http.proxy. Remote URLs are \
+         not changed. Hosts in the profile's [hosts] go through the tunnel; anything \
+         else git contacts is connected directly. git:// remotes can't use the tunnel.",
+    );
+    page.para(
+        "Ctrl+C reaches git as usual; gitaway waits for git, closes the tunnel and \
+         exits with git's exit status. Two commands using the same profile take turns.",
     );
 
     page.section("FILES");

@@ -10,6 +10,7 @@
 //! - [`profile`] defines the profile format and validates it.
 //! - [`value`] holds the validated value types profiles use (host keys, WireGuard keys, addresses).
 //! - [`resolve`] picks the profile for a command.
+//! - [`lock`] stops two commands using one profile's tunnel at once.
 //! - [`store`] loads and saves the files, safely, using `private_fs` for atomic, private writes.
 //!
 //! Secrets never appear in these files. They live in the OS keychain.
@@ -20,6 +21,7 @@
 //! test showing it parses and that invalid values are rejected. Document it in
 //! `docs/configuration.md` in the same change.
 
+pub mod lock;
 pub mod name;
 pub mod paths;
 pub(crate) mod private_fs;
