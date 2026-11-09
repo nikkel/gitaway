@@ -10,6 +10,7 @@
 //! - [`profile`] defines the profile format and validates it.
 //! - [`value`] holds the validated value types profiles use (keys, fingerprints).
 //! - [`resolve`] picks the profile for a command.
+//! - [`store`] loads and saves the files, safely.
 //!
 //! Secrets never appear in these files. They live in the OS keychain.
 //!
@@ -23,4 +24,5 @@ pub mod name;
 pub mod paths;
 pub mod profile;
 pub mod resolve;
+pub mod store;
 pub mod value;
