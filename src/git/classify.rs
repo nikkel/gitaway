@@ -19,6 +19,8 @@
 
 use std::ffi::{OsStr, OsString};
 
+use super::remote_url;
+
 /// Commands that always talk to a remote.
 pub const NETWORK_COMMANDS: &[&str] = &["clone", "fetch", "pull", "push", "ls-remote"];
 
@@ -66,6 +68,56 @@ pub struct Invocation<'a> {
     pub args: &'a [OsString],
     /// Whether the command talks to a remote.
     pub kind: Kind,
+}
+
+/// Whether a command fetches or pushes. git picks the remote, and the URL,
+/// differently for each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Direction {
+    /// `fetch`, `pull`, `clone`, `ls-remote` and similar.
+    Fetch,
+    /// `push`.
+    Push,
+}
+
+/// A remote named in a command's arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteArg<'a> {
+    /// The name of a configured remote, as in `git push github`.
+    Name(&'a str),
+    /// A URL, as in `git clone ssh://git@192.0.2.10/app.git`.
+    Url(&'a str),
+}
+
+impl<'a> Invocation<'a> {
+    /// Whether the command pushes or fetches.
+    pub fn direction(&self) -> Direction {
+        match self.subcommand {
+            Some("push") => Direction::Push,
+            _ => Direction::Fetch,
+        }
+    }
+
+    /// The first argument that's a configured remote's name or a network URL,
+    /// such as `github` in `git push --force github main`.
+    ///
+    /// Options are skipped without knowing which take values. That's safe
+    /// because a value is only picked if it's a real remote name or a valid
+    /// URL. Arguments after `--` are paths, so the search stops there.
+    pub fn remote_argument(&self, is_remote_name: impl Fn(&str) -> bool) -> Option<RemoteArg<'a>> {
+        self.args
+            .iter()
+            .map_while(|arg| arg.to_str().filter(|&arg| arg != "--"))
+            .filter(|arg| !arg.starts_with('-'))
+            .find_map(|arg| {
+                if is_remote_name(arg) {
+                    Some(RemoteArg::Name(arg))
+                } else {
+                    remote_url::parse(arg).map(|_| RemoteArg::Url(arg))
+                }
+            })
+    }
 }
 
 /// Splits git arguments (without the program name) and classifies the command.
@@ -269,6 +321,64 @@ mod tests {
     fn a_value_that_looks_like_a_command_is_not_the_subcommand() {
         let args = os(&["-c", "push", "log"]);
         assert_eq!(classify(&args).subcommand, Some("log"));
+    }
+
+    #[test]
+    fn direction() {
+        assert_eq!(classify(&os(&["push"])).direction(), Direction::Push);
+        for command in ["fetch", "pull", "clone", "ls-remote"] {
+            assert_eq!(classify(&os(&[command])).direction(), Direction::Fetch);
+        }
+    }
+
+    #[test]
+    fn remote_argument_finds_named_remotes_and_urls() {
+        let is_remote = |name: &str| ["origin", "github"].contains(&name);
+        let remote_of = |args: &[&str]| {
+            let args = os(args);
+            classify(&args)
+                .remote_argument(is_remote)
+                .map(|r| format!("{r:?}"))
+        };
+
+        assert_eq!(
+            remote_of(&["push", "--force", "github", "main"]),
+            Some("Name(\"github\")".into())
+        );
+        assert_eq!(
+            remote_of(&["fetch", "--depth", "1", "origin"]),
+            Some("Name(\"origin\")".into())
+        );
+        assert_eq!(
+            remote_of(&[
+                "clone",
+                "--branch",
+                "main",
+                "ssh://git@192.0.2.10/a.git",
+                "dir"
+            ]),
+            Some("Url(\"ssh://git@192.0.2.10/a.git\")".into())
+        );
+        assert_eq!(
+            remote_of(&["push", "git@example.com:a.git", "main"]),
+            Some("Url(\"git@example.com:a.git\")".into())
+        );
+        assert_eq!(remote_of(&["push"]), None);
+        assert_eq!(
+            remote_of(&["push", "main"]),
+            None,
+            "a branch isn't a remote"
+        );
+        assert_eq!(
+            remote_of(&["pull", "--", "origin"]),
+            None,
+            "after -- are paths"
+        );
+        assert_eq!(
+            remote_of(&["-C", "origin", "fetch"]),
+            None,
+            "global option values aren't args"
+        );
     }
 
     #[cfg(unix)]
