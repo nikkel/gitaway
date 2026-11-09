@@ -593,7 +593,8 @@ mod tests {
 
     const CONFIG: &[&str] = &[
         "[Interface]",
-        "PrivateKey = dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=",
+        // RFC 7748's published test key, not a secret.
+        "PrivateKey = dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=", // gitleaks:allow
         "Address = 10.0.0.2/32",
         "",
         "[Peer]",
