@@ -2,12 +2,10 @@
 //!
 //! Tasks:
 //!
-//! - `man`: write the man pages into `man/`.
-//! - `man --check`: fail if `man/` doesn't match what `man` would write. CI
-//!   runs this, so the committed pages can't fall behind the code.
-//!
-//! The pages are committed so they can be reviewed in a diff and read
-//! straight from a checkout (`man ./man/gitaway.1`).
+//! - `man [--out <dir>]`: write the man pages into `target/man`, or `<dir>`.
+//!   Package builds (release archives, Homebrew) run this and install the
+//!   pages. They aren't committed: `cargo install` can't install man pages,
+//!   so only packaged installs have them.
 //!
 //! # Extending
 //!
@@ -15,16 +13,16 @@
 
 mod man;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
-        ["man"] => man::write(&man_dir()),
-        ["man", "--check"] => man::check(&man_dir()),
-        _ => Err("usage: cargo xtask man [--check]".to_owned()),
+        ["man"] => man::write(&repo_root().join("target").join("man")),
+        ["man", "--out", dir] => man::write(Path::new(dir)),
+        _ => Err("usage: cargo xtask man [--out <dir>]".to_owned()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -35,10 +33,10 @@ fn main() -> ExitCode {
     }
 }
 
-/// `man/` at the repository root, wherever `cargo xtask` was run from.
-fn man_dir() -> PathBuf {
+/// The repository root, wherever `cargo xtask` was run from.
+fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask lives inside the repository")
-        .join("man")
+        .to_path_buf()
 }

@@ -26,8 +26,9 @@ jobs:
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      # The committed man pages must match the command definitions.
-      - run: cargo xtask man --check
+      # Package builds generate the man pages, so make sure that works.
+      - run: cargo test -p xtask
+      - run: cargo xtask man
 
   test:
     strategy:

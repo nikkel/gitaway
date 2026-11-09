@@ -33,12 +33,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Writes every page into `dir`, replacing what's there.
+/// Writes every page into `dir`, creating it if needed. Existing files
+/// with the same names are replaced; nothing else in `dir` is touched.
 pub fn write(dir: &Path) -> Result<(), String> {
     let pages = render_all()?;
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     for (name, text) in &pages {
         let path = dir.join(name);
@@ -46,38 +44,6 @@ pub fn write(dir: &Path) -> Result<(), String> {
     }
     println!("Wrote {} pages to {}", pages.len(), dir.display());
     Ok(())
-}
-
-/// Fails if `dir` doesn't hold exactly the pages `write` would produce.
-pub fn check(dir: &Path) -> Result<(), String> {
-    let expected = render_all()?;
-    let mut problems = Vec::new();
-    for (name, text) in &expected {
-        match std::fs::read_to_string(dir.join(name)) {
-            Ok(found) if &found == text => {}
-            Ok(_) => problems.push(format!("{name} is out of date")),
-            Err(_) => problems.push(format!("{name} is missing")),
-        }
-    }
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for entry in entries {
-        let name = entry
-            .map_err(|e| e.to_string())?
-            .file_name()
-            .to_string_lossy()
-            .into_owned();
-        if !expected.contains_key(&name) {
-            problems.push(format!("{name} isn't generated any more"));
-        }
-    }
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "the man pages don't match the code. Run `cargo xtask man` and commit the result:\n  {}",
-            problems.join("\n  ")
-        ))
-    }
 }
 
 /// Every page, by file name.
@@ -313,5 +279,37 @@ impl Page {
         }
         self.roff.control("RE", []);
         self.roff.control("fi", []);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_is_listed_on_the_main_page() {
+        let listed: Vec<&str> = COMMANDS.iter().map(|(name, _)| *name).collect();
+        for command in Cli::command().get_subcommands() {
+            assert!(
+                listed.contains(&command.get_name()),
+                "add `{}` to COMMANDS",
+                command.get_name()
+            );
+        }
+    }
+
+    #[test]
+    fn every_command_has_a_page_and_git_away_has_one_too() {
+        let pages = render_all().unwrap();
+        for name in [
+            "gitaway.1",
+            "git-away.1",
+            "gitaway-use.1",
+            "gitaway-profile.1",
+            "gitaway-profile-add.1",
+        ] {
+            assert!(pages.contains_key(name), "{name} missing");
+        }
+        assert_eq!(pages["gitaway.1"], pages["git-away.1"]);
     }
 }

@@ -15,7 +15,7 @@ $ cargo build
 $ cargo test
 $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo fmt --all
-$ cargo xtask man --check
+$ cargo xtask man
 ```
 
 CI runs all of these on Linux and macOS (Windows is best-effort). It also runs the tests against git 2.34 and Apple's git, and scans for secrets. A pull request should pass them before review.
@@ -26,7 +26,7 @@ The crate is a library with two thin binaries. Each module starts with a `//!` c
 
 ## Man pages
 
-The man pages in [`man/`](man/) are generated from the command definitions. After changing a command's flags or help text, run `cargo xtask man` and commit the updated pages. CI fails if they're out of date. See [`docs/architecture.md`](docs/architecture.md#man-pages).
+`cargo xtask man` generates the man pages into `target/man/`, where you can read them with `man target/man/gitaway.1`. They aren't committed: package builds generate them. A new gitaway command needs a line in `COMMANDS` in `xtask/src/man.rs`, and a test fails until it has one. See [`docs/architecture.md`](docs/architecture.md#man-pages).
 
 ## Tests
 

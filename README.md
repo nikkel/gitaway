@@ -59,14 +59,7 @@ $ cargo install --git https://github.com/nikkel/gitaway
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
 
-The man pages are in [`man/`](man/). `cargo install` can't install them, so copy them into your man path:
-
-```console
-$ git clone https://github.com/nikkel/gitaway && cd gitaway
-$ mkdir -p ~/.local/share/man/man1 && cp man/*.1 ~/.local/share/man/man1/
-```
-
-Release archives and packages, with the man pages included, will come with the first release.
+`gitaway --help` and `git away -h` show the help. The man pages (`man gitaway`) come with packaged installs: Homebrew and the release archives, from the first release. `cargo install` can't install man pages, so with it, `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
 ## Quick start
 
@@ -128,7 +121,7 @@ Reaching it from elsewhere needs the tunnel, which isn't built yet
 | `gitaway use <name>` | Pin the current repository to a profile. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` covers the rest. Planned: `peer` (print what your server's admin needs), `key rotate`, `list` (your repositories on the forge) and `tunnel`.
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and with a packaged install, `man gitaway` covers the rest. Planned: `peer` (print what your server's admin needs), `key rotate`, `list` (your repositories on the forge) and `tunnel`.
 
 ## Configuration
 
