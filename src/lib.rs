@@ -12,5 +12,13 @@
 //! so `git away push` works). Nearly all the logic lives here, so it can be
 //! tested and documented directly.
 //!
-//! The project is at an early stage. See `docs/` in the repository for the
-//! architecture and contributor guides.
+//! ## Stability
+//!
+//! The stability promise covers the command-line interface and the profile
+//! file format. The library API is an internal detail of the binaries and may
+//! change in any release.
+//!
+//! See `docs/` in the repository for the architecture and contributor guides.
+
+pub mod address;
+pub mod git;

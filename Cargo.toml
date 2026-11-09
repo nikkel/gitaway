@@ -12,6 +12,9 @@ categories = ["command-line-utilities", "development-tools"]
 include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+toml = "1.2.1"
 
 [lints.rust]
 missing_docs = "warn"
