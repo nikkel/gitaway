@@ -4,20 +4,29 @@ Thanks for helping. This guide covers building, testing and the conventions the 
 
 ## Build and test
 
-You need Rust 1.89 or newer and `git` on your `PATH`.
+You need:
+
+- Rust 1.89 or newer;
+- `git` 2.34 or newer on your `PATH`;
+- OpenSSH's `ssh-keygen`, which a few tests use to check gitaway against the keys and fingerprints OpenSSH produces. It's installed on most systems; on minimal Debian or Ubuntu, install `openssh-client`.
 
 ```console
 $ cargo build
 $ cargo test
-$ cargo clippy --all-targets -- -D warnings
+$ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo fmt --all
+$ cargo xtask man --check
 ```
 
-CI runs all of these on Linux and macOS (Windows is best-effort), plus a secret scan. A pull request should pass them before review.
+CI runs all of these on Linux and macOS (Windows is best-effort). It also runs the tests against git 2.34 and Apple's git, and scans for secrets. A pull request should pass them before review.
 
 ## Where things live
 
-The crate is a library with two thin binaries. Each module starts with a `//!` comment explaining its purpose, how it fits in and how to extend it. Every public item has `///` docs (the `missing_docs` lint enforces this). Contributor guides, such as adding a transport, live in [`docs/`](docs/) and are updated in the same change as the code they describe.
+The crate is a library with two thin binaries. Each module starts with a `//!` comment explaining its purpose, how it fits in and how to extend it. Every public item has `///` docs (the `missing_docs` lint enforces this). Contributor guides live in [`docs/`](docs/), starting with [`docs/architecture.md`](docs/architecture.md), and are updated in the same change as the code they describe. User-facing settings are documented in [`docs/configuration.md`](docs/configuration.md).
+
+## Man pages
+
+The man pages in [`man/`](man/) are generated from the command definitions. After changing a command's flags or help text, run `cargo xtask man` and commit the updated pages. CI fails if they're out of date. See [`docs/architecture.md`](docs/architecture.md#man-pages).
 
 ## Tests
 

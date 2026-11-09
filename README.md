@@ -8,7 +8,172 @@
 
 Reach your self-hosted git server from anywhere. At home, `gitaway` connects directly. Away from home, it opens a VPN tunnel that only gitaway itself uses: no system-wide VPN, no virtual network adapter, no root.
 
-> **Status:** in planning. Nothing is usable yet.
+> **Status:** early development, with no release yet. Working today: profiles, and checking whether you're at home before network commands. Away from home, network commands stop with a clear message. The tunnel is the next milestone.
+
+## Why
+
+You run Forgejo, Gitea or plain git over SSH on a machine at home, and your repositories' remotes point at its home address, such as `ssh://git@192.0.2.10:2222/alice/app.git`. At home that works. Elsewhere it doesn't, and the usual fixes all cost something:
+
+- a full VPN on your laptop routes everything through home, needs admin rights, and must be switched on and off;
+- a mesh VPN such as Tailscale means installing and trusting a third-party service;
+- exposing the git server to the internet widens what attackers can reach.
+
+gitaway takes a narrower path. Keep your remotes as they are, and use `git away push` instead of `git push`. At home nothing changes. Away, only that one git command goes through a tunnel to your home WireGuard server (from the next release).
+
+## How it works
+
+```text
+git away push
+     │
+     ▼
+ is this a network command for a server a profile handles?
+     │ no ──────────────────────────────────▶ run git as typed
+     │ yes
+     ▼
+ home check: does the home SSH server prove it holds the pinned host key?
+     │ yes ─────────────────────────────────▶ run git directly
+     │ no
+     ▼
+ away: open a WireGuard tunnel inside gitaway and point git at it   (next release)
+```
+
+- **gitaway wraps your installed git.** Commands it doesn't own (`commit`, `log`, `status` …) go to git unchanged, and you get git's exit code. Your git config, credential helpers and SSH keys work as before.
+- **Home is checked by identity, not by address.** A café network might use the same addresses as your home, but it can't produce your server's private host key. The check takes a few milliseconds at home, and gives up within about a second elsewhere.
+- **Profiles** describe each place you connect to. A repository remembers its profile, and remotes that no profile handles, such as GitHub, are left alone.
+
+## Requirements
+
+- **git 2.34 or newer** on your `PATH`.
+- Linux or macOS. Windows should work but isn't tested as thoroughly.
+- For the [quick start](#quick-start): `ssh-keyscan`, which comes with OpenSSH, to read your server's host key. There are [other ways](docs/configuration.md#home) to get it.
+
+gitaway doesn't need OpenSSH itself: the home check uses an SSH implementation built into gitaway. Your `ssh://` remotes still need an SSH client, as they do with plain git.
+
+## Install
+
+From source, with [Rust](https://rustup.rs) 1.89 or newer:
+
+```console
+$ cargo install --git https://github.com/nikkel/gitaway
+```
+
+This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
+
+The man pages are in [`man/`](man/). `cargo install` can't install them, so copy them into your man path:
+
+```console
+$ git clone https://github.com/nikkel/gitaway && cd gitaway
+$ mkdir -p ~/.local/share/man/man1 && cp man/*.1 ~/.local/share/man/man1/
+```
+
+Release archives and packages, with the man pages included, will come with the first release.
+
+## Quick start
+
+All addresses here are examples. Use your own.
+
+**1. Get your server's SSH host key.** On your home network:
+
+```console
+$ ssh-keyscan -p 2222 -t ed25519 192.0.2.10
+# 192.0.2.10:2222 SSH-2.0-OpenSSH_9.6
+[192.0.2.10]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop
+```
+
+You need the key line without the host name: `ssh-ed25519 AAAA…`. Ignore the `#` line that newer versions print first.
+
+**2. Create a profile.** Run `gitaway profile add` and answer the questions, or give everything as flags:
+
+```console
+$ gitaway profile add home \
+    --endpoint vpn.example.net:51820 \
+    --server-public-key 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' \
+    --home-ssh 192.0.2.10:2222 \
+    --host-key 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop' \
+    --host 192.0.2.10=10.0.0.1 \
+    --default
+```
+
+The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel.
+
+**3. Use git through gitaway.**
+
+```console
+$ git away clone ssh://git@192.0.2.10:2222/alice/app.git
+$ cd app
+$ git away pull
+$ git commit -am "fix"          # local commands work with or without gitaway
+$ git away push
+```
+
+A clone through gitaway remembers its profile. For a repository you cloned before, run `gitaway use home` inside it.
+
+Away from home, network commands currently stop with:
+
+```text
+gitaway: error: not on the home network for profile `home` (192.0.2.10:2222: …).
+Reaching it from elsewhere needs the tunnel, which isn't built yet
+```
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `gitaway profile add [name]` | Create a profile, asking for anything not given as a flag. |
+| `gitaway profile list` | List profiles. The default is marked with `*`. |
+| `gitaway profile show <name>` | Show a profile's file. |
+| `gitaway profile set <name> <key> <value>` | Change one setting, keeping the file's comments. |
+| `gitaway profile default <name>` | Make a profile the default. |
+| `gitaway profile remove <name>` | Delete a profile. |
+| `gitaway use <name>` | Pin the current repository to a profile. |
+| anything else | Passed to git. |
+
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` covers the rest. Planned: `peer` (print what your server's admin needs), `key rotate`, `list` (your repositories on the forge) and `tunnel`.
+
+## Configuration
+
+Profiles are TOML files in `~/.config/gitaway/profiles/`:
+
+```toml
+[transport.wireguard]
+endpoint = "vpn.example.net:51820"
+server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[home]
+ssh = "192.0.2.10:2222"
+host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJDpjrASKGLWdop"
+
+[hosts]
+"192.0.2.10" = "10.0.0.1"
+```
+
+The [configuration reference](docs/configuration.md) covers every setting, how a profile is chosen, and pinning a whole folder of repositories to a profile with `includeIf`.
+
+## Server side
+
+- **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec may count these as failed logins and eventually ban your laptop's address. Allowlist your home network in them. Each check is a single connection, so it rarely adds up, but a busy day of fetches can.
+- The tunnel will need a WireGuard server at home, reachable from the internet. Setup instructions come with that release.
+
+## Security model
+
+- **What the home check proves:** that the server you're talking to holds the private key for the pinned host key. That's the same guarantee as SSH's `known_hosts`. It doesn't log in and sends no credentials.
+- **Where the pinned key comes from matters.** If you capture it on a network an attacker controls, you could pin the attacker's key. Capture it at home, or read it from the server itself. (From the tunnel release, gitaway can capture it through the tunnel, where WireGuard has already authenticated the server.)
+- **Profiles hold no secrets.** They contain public keys and addresses. The tunnel's private key will live in your OS keychain, never in a profile or in `~/.ssh`.
+- **git authentication is unchanged.** gitaway never sees your SSH keys, passwords or tokens. git and ssh handle them as usual.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Limitations
+
+- No tunnel yet, so gitaway doesn't help away from home until the next release.
+- Remotes using an alias from `~/.ssh/config` only match a profile's `[hosts]` entry written with the same alias.
+- HTTPS-only servers can't be home-checked yet: the check needs an SSH server on the home network.
+
+## Documentation
+
+- [Configuration reference](docs/configuration.md)
+- [Architecture](docs/architecture.md), for contributors
+- [Contributing](CONTRIBUTING.md) and [changelog](CHANGELOG.md)
 
 ## Verifying releases
 
