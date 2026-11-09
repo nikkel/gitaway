@@ -101,6 +101,13 @@ impl Env {
             .collect()
     }
 
+    /// Whether gitaway ran a git command line containing `needle`. Only
+    /// Unix has the logging git, so only Unix tests can ask.
+    #[cfg(unix)]
+    fn ran(&self, needle: &str) -> bool {
+        self.git_log().iter().any(|line| line.contains(needle))
+    }
+
     #[cfg(unix)]
     fn install_logging_git(&self) {
         use std::os::unix::fs::PermissionsExt;
@@ -470,10 +477,6 @@ mod network {
         );
     }
 
-    pub(super) fn ran(env: &Env, needle: &str) -> bool {
-        env.git_log().iter().any(|line| line.contains(needle))
-    }
-
     #[test]
     fn at_home_git_runs() {
         let env = Env::new();
@@ -485,7 +488,7 @@ mod network {
             .args(["-C", "app", "ls-remote"])
             .assert()
             .code(128);
-        assert!(ran(&env, "-C app ls-remote"), "{:?}", env.git_log());
+        assert!(env.ran("-C app ls-remote"), "{:?}", env.git_log());
     }
 
     #[test]
@@ -504,7 +507,7 @@ mod network {
                 predicate::str::contains("different host key")
                     .and(predicate::str::contains("has no tunnel address")),
             );
-        assert!(!ran(&env, "-C app fetch"), "{:?}", env.git_log());
+        assert!(!env.ran("-C app fetch"), "{:?}", env.git_log());
     }
 
     #[test]
@@ -531,7 +534,7 @@ mod network {
             .stderr(predicate::str::contains(
                 "gitaway profile set home transport.wireguard.address",
             ));
-        assert!(!ran(&env, "-C app push"));
+        assert!(!env.ran("-C app push"));
     }
 
     #[test]
@@ -556,7 +559,7 @@ mod network {
             .args(["-C", "app", "fetch"])
             .assert()
             .code(128);
-        assert!(ran(&env, "-C app fetch"));
+        assert!(env.ran("-C app fetch"));
     }
 
     #[test]
@@ -670,7 +673,7 @@ mod network {
             .assert()
             .code(1)
             .stderr(predicate::str::contains("has no tunnel address"));
-        assert!(!ran(&env, "-C app fetch"));
+        assert!(!env.ran("-C app fetch"));
     }
 }
 
@@ -985,7 +988,6 @@ mod away {
     use super::*;
     use common::{DEVICE_TUNNEL_ADDRESS, home_server, ssh_server};
     use gitaway::keys::device_key::DeviceKey;
-    use network::ran;
 
     /// A port on 127.0.0.1 with nothing listening, for a home check that
     /// fails at once.
@@ -1171,8 +1173,9 @@ mod away {
             .assert()
             .success()
             .stderr(predicate::str::contains("gitaway check home"));
+        #[cfg(unix)]
         assert!(
-            ran(&env, "ls-remote http://192.0.2.10"),
+            env.ran("ls-remote http://192.0.2.10"),
             "{:?}",
             env.git_log()
         );
@@ -1187,8 +1190,9 @@ mod away {
             .args(["ls-remote", &format!("http://192.0.2.10:{port}/app.git")])
             .assert()
             .success();
+        #[cfg(unix)]
         assert!(
-            ran(&env, "ls-remote http://192.0.2.10"),
+            env.ran("ls-remote http://192.0.2.10"),
             "{:?}",
             env.git_log()
         );
@@ -1238,7 +1242,8 @@ mod away {
             .stderr(predicate::str::contains(
                 "git:// remotes can't go through the tunnel",
             ));
-        assert!(!ran(&env, "ls-remote git://"), "{:?}", env.git_log());
+        #[cfg(unix)]
+        assert!(!env.ran("ls-remote git://"), "{:?}", env.git_log());
     }
 
     /// A lone SIGINT (the terminal sends it to git as well) doesn't make
