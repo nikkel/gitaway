@@ -37,7 +37,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "key",
-        "Replace this device's WireGuard key with key rotate. See gitaway-key-rotate(1).",
+        "Replace this device's WireGuard key with key rotate, or use an existing one with key \
+         import. See gitaway-key-rotate(1) and gitaway-key-import(1).",
     ),
 ];
 
@@ -197,8 +198,8 @@ fn main_page() -> String {
         "Each profile has its own WireGuard private key, created by gitaway profile add \
          and kept in the OS keychain (the macOS Keychain, the Windows Credential \
          Manager or the Secret Service on Linux). Where there's no keychain, it's kept \
-         in a file readable only by you. Only gitaway key rotate replaces it, and \
-         gitaway peer prints the public half for the server.",
+         in a file readable only by you. Only gitaway key rotate and gitaway key \
+         import replace it, and gitaway peer prints the public half for the server.",
     );
 
     page.section("HOME CHECK");
@@ -272,7 +273,7 @@ fn main_page() -> String {
     page.section("SEE ALSO");
     page.text(
         "gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-key-rotate(1), \
-         git(1), ssh-keyscan(1)",
+         gitaway-key-import(1), git(1), ssh-keyscan(1)",
     );
 
     page.roff.to_roff()
@@ -351,6 +352,7 @@ mod tests {
             "gitaway-profile-add.1",
             "gitaway-peer.1",
             "gitaway-key-rotate.1",
+            "gitaway-key-import.1",
         ] {
             assert!(pages.contains_key(name), "{name} missing");
         }

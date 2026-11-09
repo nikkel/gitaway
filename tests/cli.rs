@@ -815,6 +815,78 @@ mod keys {
         assert!(env.key_file("home").exists());
     }
 
+    /// RFC 7748 section 6.1: Alice's private and public keys.
+    const IMPORTED_PRIVATE: &str = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=";
+    const IMPORTED_PUBLIC: &str = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=";
+
+    #[test]
+    fn import_from_a_pipe_replaces_the_key_only_with_yes() {
+        let env = Env::new();
+        env.add_profile("home", &["--address", "10.0.0.2/32"]);
+        let before = peer_public_key(&env, "home");
+
+        env.gitaway()
+            .args(["key", "import", "home"])
+            .write_stdin(IMPORTED_PRIVATE)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("--yes"));
+        assert_eq!(peer_public_key(&env, "home"), before);
+
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(format!("{IMPORTED_PRIVATE}\n"))
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains(format!("PublicKey = {IMPORTED_PUBLIC}"))
+                    .and(predicate::str::contains(IMPORTED_PRIVATE).not()),
+            )
+            .stderr(predicate::str::contains(IMPORTED_PRIVATE).not());
+        assert_eq!(peer_public_key(&env, "home"), IMPORTED_PUBLIC);
+    }
+
+    #[test]
+    fn import_takes_the_private_key_from_a_client_config() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        let config = format!(
+            "[Interface]\nPrivateKey = {IMPORTED_PRIVATE}\nAddress = 10.0.0.2/32\n\n\
+             [Peer]\nPublicKey = {SERVER_KEY}\nEndpoint = vpn.example.net:51820\n"
+        );
+        env.gitaway()
+            .args(["key", "import", "home"])
+            .write_stdin(config)
+            .assert()
+            .success();
+        assert_eq!(peer_public_key(&env, "home"), IMPORTED_PUBLIC);
+    }
+
+    #[test]
+    fn import_refuses_the_servers_own_key_and_damaged_keys() {
+        let env = Env::new();
+        // The profile's server is the one whose private key is pasted.
+        env.add_profile_with_server("home", IMPORTED_PUBLIC, &[]);
+        let before = peer_public_key(&env, "home");
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(IMPORTED_PRIVATE)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("server's own private key"));
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(&IMPORTED_PRIVATE[..40])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("isn't a WireGuard private key")
+                    .and(predicate::str::contains(&IMPORTED_PRIVATE[..20]).not()),
+            );
+        assert_eq!(peer_public_key(&env, "home"), before);
+    }
+
     #[test]
     fn remove_deletes_the_key() {
         let env = Env::new();

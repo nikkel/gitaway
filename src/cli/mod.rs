@@ -173,6 +173,11 @@ fn run_own_command(
             let name = pick_profile(&store, profile, profile_flag, global_options)?;
             key_cmd::rotate(&store, &name, yes)
         }
+        args::Command::Key(args::KeyCommand::Import { profile, yes }) => {
+            let store = open_store()?;
+            let name = pick_profile(&store, profile, profile_flag, global_options)?;
+            key_cmd::import(&store, &name, yes)
+        }
     }
 }
 

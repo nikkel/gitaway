@@ -15,7 +15,7 @@ include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-M
 base64 = "0.22.1"
 bytes = "1.11.1"
 clap = { version = "4.6.7", features = ["derive"] }
-dialoguer = { version = "0.12.0", default-features = false }
+dialoguer = { version = "0.12.0", default-features = false, features = ["password"] }
 getrandom = "0.3"
 gotatun = { version = "0.10.2", default-features = false, features = ["device", "ring"] }
 ipnetwork = "0.21.1"

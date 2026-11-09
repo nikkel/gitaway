@@ -62,6 +62,21 @@ pub enum KeyCommand {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Use an existing private key as a profile's device key.
+    ///
+    /// For when the server or a WireGuard app already made this device's
+    /// key pair. The key is read from stdin, never from the command line:
+    /// pipe in the key or a whole WireGuard config with its `PrivateKey`
+    /// line (`gitaway key import home < client.conf`), or, in a terminal,
+    /// paste it when asked.
+    Import {
+        /// The profile. Defaults to the one this repository or your settings
+        /// choose.
+        profile: Option<String>,
+        /// Replace an existing device key without asking.
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// `gitaway profile …`

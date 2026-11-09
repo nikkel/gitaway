@@ -149,6 +149,14 @@ Keys are dotted paths. Quote a part that contains dots, as in the last example. 
 
 Each profile has its own WireGuard private key for this device. `gitaway profile add` creates it, `gitaway peer` prints its public half for the server, `gitaway key rotate` replaces it, and `gitaway profile remove` deletes it.
 
+If your server or a WireGuard app already made a key pair for this device, use that key instead with `gitaway key import`. It reads from stdin, so the key never appears in your shell history or the process list. Pipe in the key alone or a whole client config, which gitaway takes the `PrivateKey` line from:
+
+```console
+$ gitaway key import home < client.conf
+```
+
+In a terminal, run `gitaway key import home` and paste the key when asked; it isn't shown. Replacing an existing key asks first, or needs `--yes` when the key comes from a pipe. gitaway refuses the server's own private key. A key used by another device or app works, but only one of them can be connected at a time: the server keeps one session per key.
+
 Keys are kept in the OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet), under the service name `gitaway` and the profile's name. Where there's no keychain, such as on a headless server, gitaway keeps the key in `keys/<profile>.key` in the configuration directory, with mode 600, and warns that it did. A key file other users can read is refused, as `ssh` refuses such files.
 
 `GITAWAY_KEY_STORE` chooses explicitly:

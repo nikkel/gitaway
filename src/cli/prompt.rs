@@ -10,7 +10,8 @@
 
 use std::io::IsTerminal;
 
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, Password};
+use zeroize::Zeroizing;
 
 use crate::error::Error;
 
@@ -87,6 +88,16 @@ pub fn confirm(question: &str) -> Result<bool, Error> {
         .with_prompt(question)
         .default(false)
         .interact()
+        .map_err(prompt_error)
+}
+
+/// Asks for a secret without showing what's typed or pasted. Only call
+/// this when [`interactive`] is true.
+pub fn secret(question: &str) -> Result<Zeroizing<String>, Error> {
+    Password::new()
+        .with_prompt(question)
+        .interact()
+        .map(Zeroizing::new)
         .map_err(prompt_error)
 }
 
