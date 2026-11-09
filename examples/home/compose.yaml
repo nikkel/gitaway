@@ -14,6 +14,9 @@ services:
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     volumes: [wireguard:/config]
+    environment:
+      # What new-device.sh puts in a device's config as the server's address.
+      WG_ENDPOINT: 127.0.0.1:51820
     ports:
       - 127.0.0.1:51820:51820/udp
       - 127.0.0.1:2222:2222

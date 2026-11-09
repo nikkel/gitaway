@@ -39,7 +39,7 @@ use crate::transport;
 use super::{away, prompt};
 
 /// How long the server may take to prove its key, through the tunnel.
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Runs `gitaway check`. Exits 0 when a key is pinned that matches the
 /// server, proved directly at home or through a working tunnel; 1 otherwise.
@@ -192,7 +192,7 @@ async fn report_home_check(home: &Home) {
 }
 
 /// The key's type as it's written in the key, such as `ssh-ed25519`.
-fn algorithm_name(key: &HostKey) -> String {
+pub(crate) fn algorithm_name(key: &HostKey) -> String {
     key.to_string()
         .split_whitespace()
         .next()

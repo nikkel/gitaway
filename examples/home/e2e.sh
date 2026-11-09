@@ -78,16 +78,14 @@ api -d '{"name":"app","auto_init":true,"default_branch":"main"}' \
     http://127.0.0.1:3000/api/v1/user/repos >/dev/null
 api -d "{\"title\":\"e2e\",\"key\":\"$(cat "$work/id_ed25519.pub")\"}" \
     http://127.0.0.1:3000/api/v1/user/keys >/dev/null
-server_key=$(compose exec -T wireguard cat /config/server.pub)
 
-step "Create a profile and add this device to the server"
-"$GITAWAY" profile add home --endpoint 127.0.0.1:51820 --server-public-key "$server_key" \
-    --address 10.0.0.2/32 --home-ssh 192.0.2.10:2222 --host 192.0.2.10=10.0.0.1
+step "Set up: the server makes this device's config, gitaway setup does the rest"
+compose exec -T wireguard new-device.sh 10.0.0.2 >"$work/laptop.conf"
+expect "Found your git server at 10.0.0.1:2222" \
+    "$GITAWAY" setup home --config "$work/laptop.conf" --url "$SSH_URL"
 device_key=$("$GITAWAY" peer home 2>/dev/null | sed -n 's/^PublicKey = //p')
-compose exec -T wireguard add-peer.sh "$device_key" 10.0.0.2
 
-step "check: tunnel works, host key pinned through it"
-expect "Pinned it" "$GITAWAY" check home --yes
+step "check: the tunnel works and the pinned host key matches"
 expect "It matches" "$GITAWAY" check home
 host_key=$(sed -n 's/^host_key = "\(.*\)"$/\1/p' "$XDG_CONFIG_HOME/gitaway/profiles/home.toml")
 [ -n "$host_key" ] || fail "no host key pinned"
@@ -117,8 +115,8 @@ git -C http-clone commit -qm "push over http"
 [ "$(git -C ssh-clone remote get-url origin)" = "$SSH_URL" ] || fail "the remote URL changed"
 
 step "Home: with the forge on the local network, commands go directly"
-"$GITAWAY" profile add lan --endpoint 127.0.0.1:51820 --server-public-key "$server_key" \
-    --home-ssh 127.0.0.1:2222 --host-key "$host_key" --host 127.0.0.1=10.0.0.1 >/dev/null
+expect "Tunnel: not tested" "$GITAWAY" setup lan --yes --config "$work/laptop.conf" \
+    --url ssh://git@127.0.0.1:2222/alice/app.git
 expect "you're home" "$GITAWAY" check lan
 out=$(GIT_TRACE=1 "$GITAWAY" ls-remote ssh://git@127.0.0.1:2222/alice/app.git 2>&1) \
     || { echo "$out" >&2; fail "ls-remote at home failed"; }

@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
-- `examples/home/`: a WireGuard server and Forgejo in Docker, for trying gitaway without a home server, and an end-to-end test (`e2e.sh`) that CI runs against them.
+- `gitaway setup` creates a working profile from two answers: the VPN config file the server gave this device (a WireGuard `.conf`) and a clone URL from the git server. It finds the git server inside the tunnel by trying the addresses the config routes, pins its host key through the tunnel, and saves nothing unless that works. At home, where the tunnel often can't be reached, it asks whether you're home and pins the key directly. Configs with a `PresharedKey` aren't supported yet.
+- `docs/wireguard-basics.md` explains WireGuard's keys, peers and config files for people new to it. The quick start now starts with `gitaway setup`.
+- `examples/home/`: a WireGuard server and Forgejo in Docker, for trying gitaway without a home server, and an end-to-end test (`e2e.sh`) that CI runs against them. Its WireGuard server hands out device configs (`new-device.sh`), and the test sets up with `gitaway setup`.
 - `gitaway check` tests a profile's tunnel end to end, pins the home server's SSH host key through it (safe from any network, no `ssh-keyscan` at home needed), warns if a pinned key has changed, and runs the home check. `[home].host_key` is now optional: until it's pinned, commands use the tunnel.
 - `gitaway key import` uses a private key the server or a WireGuard app already made, read from stdin (the key alone or a whole client config). It refuses the server's own key and asks before replacing a key.
 - `gitaway profile add` ends by printing the `[Peer]` block for the server. The tunnel refuses a profile whose server key is this device's own key, a common mix-up, and says how to fix it.

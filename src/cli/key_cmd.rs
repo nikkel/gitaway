@@ -76,7 +76,7 @@ pub fn rotate(
 
 /// The most `key import` reads from stdin: far more than any WireGuard
 /// config, so a wrong pipe fails quickly instead of filling memory.
-const IMPORT_LIMIT: u64 = 64 * 1024;
+pub(crate) const IMPORT_LIMIT: u64 = 64 * 1024;
 
 /// Runs `gitaway key import`.
 pub fn import(
@@ -147,7 +147,7 @@ fn read_private_key_text() -> Result<Zeroizing<String>, Error> {
 /// Finds the private key in `text`: a bare base64 key (as `wg genkey`
 /// prints), or a WireGuard config with exactly one `PrivateKey` line.
 /// Errors never include the text, which may hold a secret.
-fn parse_private_key(text: &str) -> Result<DeviceKey, String> {
+pub(crate) fn parse_private_key(text: &str) -> Result<DeviceKey, String> {
     let mut found = text.lines().filter_map(private_key_line);
     let candidate = match (found.next(), found.next()) {
         (Some(value), None) => value,

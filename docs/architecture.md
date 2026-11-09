@@ -49,7 +49,8 @@ gitaway [--profile <name>] [git global options] <command> [args]
 │
 ├─ nothing, -h, --help ───────────────▶ gitaway's short help
 ├─ --version ─────────────────────────▶ gitaway's version
-├─ profile, use, peer, key ───────────▶ gitaway's own commands
+├─ setup, profile, use, peer, key, ───▶ gitaway's own commands
+│  check
 ├─ list, tunnel ──────────────────────▶ "not available yet" (reserved)
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
@@ -77,7 +78,25 @@ gitaway [--profile <name>] [git global options] <command> [args]
 
 The exchange is given 1 second. A match means home; anything else (a different key, a timeout, a refused connection, or no key pinned yet) means away. The code is in `src/home_check.rs`.
 
-`gitaway check` (`src/cli/check_cmd.rs`) pins the key in the first place. It runs the same exchange over a connection through the tunnel (`home_check::capture`), offering every type gitaway can pin, best first (Ed25519, ECDSA, RSA with SHA-2), or the already pinned type first when there is one, so the comparison is like for like. WireGuard has authenticated the far end, so there's no trust-on-first-use step. A wrong `[hosts]` mapping can only make gitaway pin a key that doesn't match at home, which means using the tunnel there too: it fails safe.
+`gitaway setup` (`src/cli/setup_cmd.rs`) pins the key in the first place, while finding the git server through the tunnel (see [Setting up](#setting-up)). `gitaway check` (`src/cli/check_cmd.rs`) pins or re-checks it later. Both run the same exchange over a connection through the tunnel (`home_check::capture`), offering every type gitaway can pin, best first (Ed25519, ECDSA, RSA with SHA-2), or the already pinned type first when there is one, so the comparison is like for like. WireGuard has authenticated the far end, so there's no trust-on-first-use step (except when setup runs at home; see below). A wrong `[hosts]` mapping can only make gitaway pin a key that doesn't match at home, which means using the tunnel there too: it fails safe.
+
+## Setting up
+
+`gitaway setup` turns the config file a VPN server gives a device into a profile, so users never copy keys or addresses by hand:
+
+```text
+ VPN config ──client_config::read──▶ transport settings, device key, routes
+ clone URL ─────────────────────────▶ the git server's home address and SSH port
+ the git server answers on this network, and the user says they're home?
+    yes ──▶ pin its key directly; the tunnel isn't tested
+ otherwise: open the tunnel, try ClientConfig::likely_addresses in order
+    an SSH server answers ──▶ pin the key it proves; [hosts] maps home address → that address
+    no handshake, or nothing answers ──▶ error; nothing saved
+```
+
+The config tells gitaway everything about the tunnel but not where the git server is inside it. Its routes (WireGuard's `AllowedIPs`) narrow that down: a single routed address first, then the home address itself if the home network is routed, then the first address of the device's /24. Each VPN's format is a `ConfigFormat` next to its transport (see [adding a transport](adding-a-transport.md)), so setup itself doesn't change when a VPN is added.
+
+Pinning at home is trust on first use: something answering at the home address on the local network is taken to be the git server once the user confirms they're home. It's offered because the tunnel often can't be reached from inside the home network, and `gitaway check` from another network later confirms the key through the tunnel.
 
 ## Away from home: the proxy
 
@@ -111,7 +130,7 @@ The code is in `src/proxy/`: `socks.rs` (the protocol), `mod.rs` (the server and
 | `src/home_check.rs` | The home check. |
 | `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
 | `src/proxy/` | The per-command SOCKS5 proxy git talks to when away, and git's environment for it. |
-| `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, and a userspace TCP/IP stack (`netstack.rs`). See [adding a transport](adding-a-transport.md). |
+| `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, a userspace TCP/IP stack (`netstack.rs`), and readers for the client configs VPN servers hand out (`client_config.rs`), used by `gitaway setup`. See [adding a transport](adding-a-transport.md). |
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |

@@ -1307,3 +1307,238 @@ mod away {
             .stderr(predicate::str::contains("gitaway key rotate home"));
     }
 }
+
+mod setup {
+    use super::*;
+    use common::{DEVICE_TUNNEL_ADDRESS, HOME_TUNNEL_ADDRESS, home_server, ssh_server};
+    use gitaway::keys::device_key::DeviceKey;
+
+    /// A WireGuard client config, as a server hands one to a device.
+    fn client_config(env: &Env, device: &DeviceKey, server: &str, endpoint: &str) -> PathBuf {
+        let path = env.path("laptop.conf");
+        let text = format!(
+            "[Interface]\nPrivateKey = {}\nAddress = {DEVICE_TUNNEL_ADDRESS}/32\n\n\
+             [Peer]\nPublicKey = {server}\nAllowedIPs = {HOME_TUNNEL_ADDRESS}/32\n\
+             Endpoint = {endpoint}\nPersistentKeepalive = 25\n",
+            device.to_base64().as_str()
+        );
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    /// A device key, a real WireGuard server that knows it and forwards
+    /// `ports`, and the config the server would give the device.
+    fn server_and_config(env: &Env, ports: &[u16]) -> (DeviceKey, PathBuf) {
+        let device = DeviceKey::generate();
+        let server_key = DeviceKey::generate();
+        let server_public = server_key.public_key().to_string();
+        let server = home_server(server_key, &device.public_key(), ports);
+        let endpoint = format!("127.0.0.1:{}", server.udp_port);
+        let config = client_config(env, &device, &server_public, &endpoint);
+        (device, config)
+    }
+
+    fn profile_text(env: &Env, name: &str) -> String {
+        std::fs::read_to_string(env.path(&format!("config/gitaway/profiles/{name}.toml"))).unwrap()
+    }
+
+    fn nothing_saved(env: &Env, name: &str) -> bool {
+        !env.path(&format!("config/gitaway/profiles/{name}.toml"))
+            .exists()
+            && !env.key_file(name).exists()
+    }
+
+    #[test]
+    fn away_it_finds_the_git_server_through_the_tunnel_and_saves_a_working_profile() {
+        let env = Env::new();
+        let (port, host_key) = ssh_server(21);
+        let (device, config) = server_and_config(&env, &[port]);
+        // 192.0.2.10 answers nowhere, so this device is "away".
+        let url = format!("ssh://git@192.0.2.10:{port}/alice/app.git");
+
+        env.gitaway()
+            .args(["setup", "--config", config.to_str().unwrap(), "--url", &url])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("Tunnel: works")
+                    .and(predicate::str::contains(format!(
+                        "Found your git server at {HOME_TUNNEL_ADDRESS}:{port}"
+                    )))
+                    .and(predicate::str::contains(
+                        "`home` is now the default profile",
+                    )),
+            );
+
+        let text = profile_text(&env, "home");
+        assert!(
+            text.contains(host_key.split_whitespace().nth(1).unwrap()),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("\"192.0.2.10\" = \"{HOME_TUNNEL_ADDRESS}\"")),
+            "{text}"
+        );
+        assert_eq!(
+            env.device_public_key("home"),
+            device.public_key().to_string(),
+            "the config's key wasn't kept"
+        );
+        // The saved profile works on its own.
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("It matches"));
+    }
+
+    #[test]
+    fn at_home_with_yes_it_pins_the_key_found_directly_without_the_tunnel() {
+        let env = Env::new();
+        let (port, host_key) = ssh_server(22);
+        let device = DeviceKey::generate();
+        // Nothing listens at the endpoint: the tunnel must not be needed.
+        let config = client_config(&env, &device, SERVER_KEY, "127.0.0.1:9");
+        let url = format!("ssh://git@127.0.0.1:{port}/alice/app.git");
+
+        env.gitaway()
+            .args([
+                "setup",
+                "lan",
+                "--yes",
+                "--config",
+                config.to_str().unwrap(),
+                "--url",
+                &url,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Tunnel: not tested"));
+        let text = profile_text(&env, "lan");
+        assert!(
+            text.contains(host_key.split_whitespace().nth(1).unwrap()),
+            "{text}"
+        );
+        env.gitaway()
+            .args(["check", "lan"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("you're home"));
+    }
+
+    #[test]
+    fn a_tunnel_without_the_git_server_saves_nothing_and_says_what_was_tried() {
+        let env = Env::new();
+        // The server forwards nothing, so the git server's port is refused.
+        let (_device, config) = server_and_config(&env, &[]);
+        env.gitaway()
+            .args([
+                "setup",
+                "--config",
+                config.to_str().unwrap(),
+                "--url",
+                "http://192.0.2.10:3000/alice/app.git",
+            ])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("didn't answer inside it")
+                    .and(predicate::str::contains(format!(
+                        "{HOME_TUNNEL_ADDRESS}:3000"
+                    )))
+                    .and(predicate::str::contains("--inside")),
+            );
+        assert!(nothing_saved(&env, "home"));
+    }
+
+    #[test]
+    fn a_server_that_does_not_know_this_device_saves_nothing() {
+        let env = Env::new();
+        let (port, _) = ssh_server(23);
+        let (_device, mut config) = server_and_config(&env, &[port]);
+        // Another device's config for the same server: unknown to it.
+        let text = std::fs::read_to_string(&config).unwrap();
+        let other = DeviceKey::generate();
+        let first_line_end = text.find("\nAddress").unwrap();
+        let text = format!(
+            "[Interface]\nPrivateKey = {}{}",
+            other.to_base64().as_str(),
+            &text[first_line_end..]
+        );
+        config = env.path("other.conf");
+        std::fs::write(&config, text).unwrap();
+
+        env.gitaway()
+            .args([
+                "setup",
+                "--config",
+                config.to_str().unwrap(),
+                "--url",
+                &format!("ssh://git@192.0.2.10:{port}/alice/app.git"),
+            ])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("no answer from your VPN server")
+                    .and(predicate::str::contains("has added this device")),
+            );
+        assert!(nothing_saved(&env, "home"));
+    }
+
+    #[test]
+    fn bad_input_is_refused_before_anything_is_saved() {
+        let env = Env::new();
+        let not_a_config = env.path("notes.txt");
+        std::fs::write(&not_a_config, "remember the milk\n").unwrap();
+        let setup = |config: &Path, url: &str| {
+            env.gitaway()
+                .args(["setup", "--config", config.to_str().unwrap(), "--url", url])
+                .assert()
+                .code(1)
+        };
+        setup(&not_a_config, "ssh://git@192.0.2.10/app.git")
+            .stderr(predicate::str::contains("isn't a VPN client config"));
+        setup(&env.path("missing.conf"), "ssh://git@192.0.2.10/app.git")
+            .stderr(predicate::str::contains("couldn't open"));
+
+        let config = client_config(&env, &DeviceKey::generate(), SERVER_KEY, "127.0.0.1:9");
+        setup(&config, "/srv/git/app.git").stderr(predicate::str::contains("--url"));
+        assert!(nothing_saved(&env, "home"));
+
+        env.add_profile("home", &[]);
+        setup(&config, "ssh://git@192.0.2.10/app.git")
+            .stderr(predicate::str::contains("already exists"));
+    }
+
+    #[test]
+    fn config_text_given_as_the_path_is_refused_without_repeating_its_key() {
+        let env = Env::new();
+        let device = DeviceKey::generate();
+        let config = client_config(&env, &device, SERVER_KEY, "127.0.0.1:9");
+        let text = std::fs::read_to_string(config).unwrap();
+        let private = device.to_base64();
+        let out = env
+            .gitaway()
+            .args([
+                "setup",
+                "--config",
+                &text,
+                "--url",
+                "ssh://git@192.0.2.10/app.git",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let shown = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(shown.contains("not the config itself"), "{shown}");
+        assert!(
+            !shown.contains(&private[..20]),
+            "the private key was shown: {shown}"
+        );
+        assert!(nothing_saved(&env, "home"));
+    }
+}

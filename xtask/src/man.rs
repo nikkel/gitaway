@@ -24,6 +24,11 @@ use roff::{Roff, bold, italic, roman};
 /// The commands listed in the main page, with a one-line summary.
 const COMMANDS: &[(&str, &str)] = &[
     (
+        "setup",
+        "Set up a profile from the VPN config your server gave this device and a clone URL. \
+         See gitaway-setup(1).",
+    ),
+    (
         "profile",
         "Add, list, show, change and remove profiles. See gitaway-profile(1).",
     ),
@@ -270,7 +275,7 @@ fn main_page() -> String {
 
     page.section("EXAMPLES");
     page.example(&[
-        "gitaway profile add home",
+        "gitaway setup",
         "gitaway clone ssh://git@192.0.2.10:2222/alice/app.git",
         "cd app && git away push",
         "gitaway use office",
@@ -278,7 +283,7 @@ fn main_page() -> String {
 
     page.section("SEE ALSO");
     page.text(
-        "gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-check(1), \
+        "gitaway-setup(1), gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-check(1), \
          gitaway-key-rotate(1), gitaway-key-import(1), git(1), ssh-keyscan(1)",
     );
 
@@ -360,6 +365,7 @@ mod tests {
             "gitaway-key-rotate.1",
             "gitaway-key-import.1",
             "gitaway-check.1",
+            "gitaway-setup.1",
         ] {
             assert!(pages.contains_key(name), "{name} missing");
         }

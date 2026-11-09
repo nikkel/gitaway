@@ -17,7 +17,7 @@ use toml_edit::{DocumentMut, Item, Key, Table, Value, value};
 
 use crate::address::HostPort;
 use crate::config::name::ProfileName;
-use crate::config::profile::Transport;
+use crate::config::profile::{Transport, WireGuard};
 use crate::config::store::{Store, StoreError};
 use crate::config::value::{HostKey, InterfaceAddress, WireGuardPublicKey};
 use crate::error::Error;
@@ -43,13 +43,15 @@ pub fn run(command: ProfileCommand) -> Result<i32, Error> {
     Ok(0)
 }
 
-/// Everything `profile add` collects, already validated.
-struct NewProfile {
-    endpoint: HostPort,
-    server_public_key: WireGuardPublicKey,
-    address: Option<InterfaceAddress>,
-    home: Option<(HostPort, Option<HostKey>)>,
-    hosts: Vec<(HostPort, HostPort)>,
+/// Everything a new profile holds, already validated. Built by `profile add`
+/// and `setup`.
+pub(crate) struct NewProfile {
+    /// How to reach home.
+    pub transport: Transport,
+    /// The `[home]` SSH server and its host key, if known.
+    pub home: Option<(HostPort, Option<HostKey>)>,
+    /// The `[hosts]` entries: LAN address, address through the tunnel.
+    pub hosts: Vec<(HostPort, HostPort)>,
 }
 
 fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
@@ -131,9 +133,12 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
     }
 
     let new = NewProfile {
-        endpoint,
-        server_public_key,
-        address,
+        transport: Transport::WireGuard(WireGuard {
+            endpoint,
+            server_public_key,
+            address,
+            mtu: None,
+        }),
         home,
         hosts,
     };
@@ -207,16 +212,23 @@ fn ensure_device_key(
 }
 
 /// Builds the profile file. Validation happens when the store saves it.
-fn build_profile(new: &NewProfile) -> DocumentMut {
-    let mut wireguard = Table::new();
-    wireguard["endpoint"] = value(new.endpoint.to_string());
-    wireguard["server_public_key"] = value(new.server_public_key.to_string());
-    if let Some(address) = &new.address {
-        wireguard["address"] = value(address.to_string());
-    }
+pub(crate) fn build_profile(new: &NewProfile) -> DocumentMut {
     let mut transport = Table::new();
     transport.set_implicit(true);
-    transport["wireguard"] = Item::Table(wireguard);
+    match &new.transport {
+        Transport::WireGuard(wg) => {
+            let mut wireguard = Table::new();
+            wireguard["endpoint"] = value(wg.endpoint.to_string());
+            wireguard["server_public_key"] = value(wg.server_public_key.to_string());
+            if let Some(address) = &wg.address {
+                wireguard["address"] = value(address.to_string());
+            }
+            if let Some(mtu) = wg.mtu {
+                wireguard["mtu"] = value(i64::from(mtu));
+            }
+            transport["wireguard"] = Item::Table(wireguard);
+        }
+    }
 
     let mut doc = DocumentMut::new();
     doc["transport"] = Item::Table(transport);
@@ -315,7 +327,8 @@ fn remove(store: &Store, name: &ProfileName, yes: bool) -> Result<(), Error> {
     Ok(())
 }
 
-fn set_default(store: &Store, name: &ProfileName) -> Result<(), Error> {
+/// Makes `name` the default profile.
+pub(crate) fn set_default(store: &Store, name: &ProfileName) -> Result<(), Error> {
     if !store.profile_exists(name) {
         return Err(StoreError::NotFound(name.clone()).into());
     }

@@ -18,8 +18,8 @@ Nothing else in gitaway knows which transport is in use. The local proxy that gi
 
 ```text
  git ─▶ local proxy ─▶ dyn Transport::connect(10.0.0.1:2222)
-                          ├─ WireGuardTransport  (src/transport/wireguard.rs)
-                          └─ YourTransport       (src/transport/your_vpn.rs)
+                          ├─ WireGuardTransport  (src/transport/wireguard/)
+                          └─ YourTransport       (src/transport/your_vpn/)
 ```
 
 ## Reusing the network stack
@@ -33,18 +33,33 @@ let (stack, pipe) = NetStack::new(tunnel_address, mtu);
 let stream = stack.connect(target).await?;
 ```
 
-Your transport moves packets between `pipe` and the VPN library, and its `connect` calls `stack.connect`. `wireguard.rs` is a complete example in about 150 lines; most of it is glue between `pipe` and gotatun.
+Your transport moves packets between `pipe` and the VPN library, and its `connect` calls `stack.connect`. `wireguard/mod.rs` is a complete example in about 150 lines; most of it is glue between `pipe` and gotatun.
 
 A transport that already yields TCP streams (an SSH jump host, a SOCKS server) doesn't need the stack: its `connect` returns those streams directly.
+
+## Reading the server's client config
+
+`gitaway setup` builds a profile from the config file a VPN server gives a new device, so users never copy settings by hand. Each transport reads its own format by implementing `ConfigFormat` (`src/transport/client_config.rs`):
+
+```rust
+pub trait ConfigFormat: Sync {
+    fn name(&self) -> &'static str;               // "OpenVPN"
+    fn recognises(&self, text: &str) -> bool;      // a quick look: is this mine?
+    fn read(&self, text: &str) -> Result<ClientConfig, String>;
+}
+```
+
+`read` returns the profile's transport settings, the device's secret if the file has one, and the networks the config routes through the tunnel. setup then tries the addresses those routes make likely (`ClientConfig::likely_addresses`) to find the git server, so a new format needs nothing else from setup. `src/transport/wireguard/client_config.rs` is the example. Error messages must never quote the file: it holds the device's secret.
 
 ## Steps
 
 1. **Settings.** Add a variant to `Transport` in `src/config/profile.rs` with a struct for its settings (`#[serde(deny_unknown_fields)]`), and validate it in `Profile::validate`. The TOML table name is the variant's name: `[transport.openvpn]`. Add tests that it parses and that invalid values are rejected.
-2. **The transport.** Add `src/transport/<name>.rs` with a type that implements `Transport`, and an `open` function that starts the tunnel. Start with a `//!` comment explaining how it works, as `wireguard.rs` does.
-3. **Wire it up.** Add an arm to `open` in `src/transport/mod.rs`, and to any `match` on the profile's transport that the compiler points out (`profile list`, `peer`).
-4. **Keys.** If the VPN uses a per-device secret, keep it with `src/keys/` (the OS keychain or a private file), never in the profile.
-5. **Tests.** Test it in-process where possible, with a server on `127.0.0.1` inside the test, as `wireguard.rs` does: a real handshake and real data, but no root and no network.
-6. **Docs.** Document the settings in [`configuration.md`](configuration.md), and update this guide if something here was unclear.
+2. **The transport.** Add a folder `src/transport/<name>/` whose `mod.rs` has a type that implements `Transport`, and an `open` function that starts the tunnel. Start with a `//!` comment explaining how it works, as `wireguard/mod.rs` does.
+3. **Wire it up.** Add an arm to `open` in `src/transport/mod.rs`, and to any `match` on the profile's transport that the compiler points out (`profile list`, `peer`, `setup`).
+4. **Its client config.** Add `src/transport/<name>/client_config.rs` implementing `ConfigFormat`, and list it in `FORMATS` in `src/transport/client_config.rs`. Test it with configs as real servers write them, and that errors never contain the secret.
+5. **Keys.** If the VPN uses a per-device secret, keep it with `src/keys/` (the OS keychain or a private file), never in the profile.
+6. **Tests.** Test it in-process where possible, with a server on `127.0.0.1` inside the test, as `wireguard/mod.rs` does: a real handshake and real data, but no root and no network.
+7. **Docs.** Document the settings in [`configuration.md`](configuration.md), and update this guide if something here was unclear.
 
 ## Rules
 

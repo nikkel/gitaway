@@ -6,7 +6,8 @@
 //!
 //!   no command, -h, --help ─────────► gitaway's help
 //!   --version ──────────────────────► gitaway's version
-//!   profile, use, peer, key, check ─► gitaway's own commands (clap)
+//!   setup, profile, use, peer, key, ►
+//!   check                            gitaway's own commands (clap)
 //!   list, tunnel ───────────────────► reserved: "not available yet"
 //!   network command (push, fetch …) ► network::plan, then git directly,
 //!                                     or through the tunnel (away)
@@ -36,6 +37,7 @@ pub mod key_cmd;
 pub mod network;
 pub mod profile_cmd;
 pub mod prompt;
+pub mod setup_cmd;
 pub mod use_cmd;
 
 use std::ffi::OsString;
@@ -54,7 +56,7 @@ use crate::proxy;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
-pub const OWN_COMMANDS: &[&str] = &["profile", "use", "peer", "key", "check"];
+pub const OWN_COMMANDS: &[&str] = &["setup", "profile", "use", "peer", "key", "check"];
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
@@ -66,10 +68,12 @@ gitaway: reach your self-hosted git server from anywhere
 Usage: gitaway [--profile <name>] <command> [args]
 
 gitaway's own commands:
+  setup      Set up a profile from the VPN config your server gave this device
+  check      Test a profile's tunnel and pin its home server's host key
   profile    Add, list, show, change and remove profiles
   use        Pin the current repository to a profile
   peer       Print what the WireGuard server needs to know about this device
-  key        Replace this device's WireGuard key (key rotate)
+  key        Replace or import this device's WireGuard key
 
 Every other command goes to git. Network commands (clone, fetch, pull, push,
 ls-remote, remote update, submodule update) first check whether you're at the
@@ -163,6 +167,7 @@ fn run_own_command(
     };
     match cli.command {
         args::Command::Profile(command) => profile_cmd::run(command),
+        args::Command::Setup(command) => setup_cmd::run(&open_store()?, command),
         args::Command::Use(command) => use_cmd::run(command, global_options),
         args::Command::Peer(command) => {
             let store = open_store()?;

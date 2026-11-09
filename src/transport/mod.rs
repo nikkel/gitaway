@@ -7,19 +7,24 @@
 //!
 //! ```text
 //!  proxy ──connect(10.0.0.1:2222)──▶ dyn Transport ──▶ stream to the server
-//!                                       ├─ WireGuard  (wireguard.rs)
-//!                                       └─ … a new transport is a new file
+//!                                       ├─ WireGuard  (wireguard/)
+//!                                       └─ … a new transport is a new folder
 //! ```
 //!
 //! Dropping a transport closes the tunnel and stops its background tasks.
 //!
+//! [`client_config`] reads the config file a VPN server gives a device, so
+//! `gitaway setup` can make a profile from it.
+//!
 //! # Extending
 //!
 //! A new transport is a new [`crate::config::profile::Transport`] variant
-//! (its settings), a new file here implementing [`Transport`], and an arm in
-//! [`open`]. A VPN that carries IP packets can reuse [`netstack`] for TCP,
+//! (its settings), a new folder here implementing [`Transport`], an arm in
+//! [`open`], and a reader for its client config in
+//! [`client_config::FORMATS`]. A VPN that carries IP packets can reuse [`netstack`] for TCP,
 //! as WireGuard does. See `docs/adding-a-transport.md`.
 
+pub mod client_config;
 pub mod netstack;
 pub mod wireguard;
 

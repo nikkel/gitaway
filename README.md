@@ -63,57 +63,55 @@ This installs two commands, `gitaway` and `git-away`. They're the same program: 
 
 ## Quick start
 
-All addresses here are examples. Use your own.
+All addresses and keys here are examples.
 
-**1. Create a profile.** Run `gitaway profile add` and answer the questions, or give everything as flags:
+**1. Add this device on your home WireGuard server.** WireGuard servers, router and NAS VPN apps, and tools such as wg-easy all have a way to add a device ("add client" or "add peer"), and give you a **config file** for it: the same file you'd import into the WireGuard app. It looks like this:
 
-```console
-$ gitaway profile add home \
-    --endpoint vpn.example.net:51820 \
-    --server-public-key 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' \
-    --home-ssh 192.0.2.10:2222 \
-    --host 192.0.2.10=10.0.0.1 \
-    --default
-```
+```ini
+[Interface]
+PrivateKey = <this device's private key>
+Address = 10.0.0.2/32
 
-The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. If you're copying from a WireGuard client config, the server's key is the `PublicKey` under `[Peer]`, not the client's own public key that apps show at the top. `--home-ssh` is an SSH server at home (your git server's SSH port is ideal) whose host key will tell gitaway you're home. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel. If the git server runs on the WireGuard server itself, that's the WireGuard server's own tunnel address.
-
-This also creates the profile's own WireGuard key for this device, kept in your OS keychain. If your server or a WireGuard app already made a key pair for this device, use it with `gitaway key import home < client.conf` instead.
-
-**2. Tell your WireGuard server about this device.** `profile add` ends by printing this block, and `gitaway peer` prints it again:
-
-```console
-$ gitaway peer home
 [Peer]
-# gitaway profile `home`
-PublicKey = hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=
-AllowedIPs = <a free tunnel address for this device>/32
+PublicKey = <the server's public key>
+Endpoint = vpn.example.net:51820
+AllowedIPs = 10.0.0.1/32
 ```
 
-Add the block to your server's WireGuard configuration with a free address in `AllowedIPs`, then save that address in the profile:
+It holds this device's private key, so treat it like a password. New to WireGuard? [WireGuard in five minutes](docs/wireguard-basics.md) explains what each line means.
+
+**2. Run `gitaway setup`.** It asks for that file (its path, or paste the config itself) and for a clone URL from your git server, the way you use it at home, then works out everything else by trying it:
 
 ```console
-$ gitaway profile set home transport.wireguard.address 10.0.0.2/32
+$ gitaway setup
+Name for this profile [home]:
+The VPN config your server gave this device: type the file's path, or paste the config: laptop.conf
+A clone URL from your git server, as you use it at home: ssh://git@192.0.2.10:2222/alice/app.git
+Connecting to your VPN server at vpn.example.net:51820…
+Looking for your git server inside the tunnel at 10.0.0.1:2222…
+Tunnel: works.
+Found your git server at 10.0.0.1:2222. Its host key: ssh-ed25519 SHA256:tAXFyTXI8xtDaujAEcwJslAYc9/6FKcUkd2Lw0xDhPo
+gitaway will use it to recognise home.
+
+Saved profile `home` (~/.config/gitaway/profiles/home.toml), with this device's key in the macOS Keychain.
+`home` is now the default profile.
+laptop.conf holds this device's private key, which gitaway has now stored, so you can delete the file.
+
+Done. Try it: git away ls-remote ssh://git@192.0.2.10:2222/alice/app.git
 ```
 
-The private key never leaves this device; only the public key goes to the server.
+| setup needs | It gets it from |
+|---|---|
+| your WireGuard server's address and public key, this device's tunnel address and private key | the config file |
+| your git server's address at home | the clone URL |
+| where your git server is inside the tunnel | trying the addresses the config's `AllowedIPs` point to |
+| your git server's SSH host key, which is how gitaway recognises home | the git server itself, through the tunnel |
 
-**3. Check the tunnel and pin your home server's host key.** Do this away from home, for example on your phone's hotspot:
+Nothing is saved unless the tunnel works, so if something's wrong you can fix it and run `setup` again.
 
-```console
-$ gitaway check home
-Tunnel: works. Reached 192.0.2.10:2222 through it, at 10.0.0.1:2222.
-Home server's host key: ssh-ed25519 SHA256:tAXFyTXI8xtDaujAEcwJslAYc9/6FKcUkd2Lw0xDhPo
-Pin this key, so gitaway can recognise home? yes
-Pinned it in profile `home`.
-Home check: away from home (no answer within 200 ms), so commands use the tunnel.
-```
+**At home**, the tunnel usually can't be tested: from inside your network it would have to go out to your router's public address and back in, which many routers can't do. So when your git server answers on the local network, setup asks whether you're home. Say yes, and it saves the git server's key directly; then run `gitaway check` once from another network, such as your phone's hotspot, to test the tunnel.
 
-The key is fetched through the tunnel, which WireGuard has authenticated, so it's your server's real key even on a café network. Until a key is pinned, commands always use the tunnel. Run `gitaway check` again whenever something seems wrong: it says which part failed.
-
-At home, `check` verifies the pinned key directly and doesn't try the tunnel: from inside your network, the tunnel would have to go out to your router's public address and back in, which many routers can't do. (At home you can also pin the key from `ssh-keyscan`; see [the configuration reference](docs/configuration.md#home).)
-
-**4. Use git through gitaway.**
+**3. Use git through gitaway.**
 
 ```console
 $ git away clone ssh://git@192.0.2.10:2222/alice/app.git
@@ -125,17 +123,35 @@ $ git away push
 
 A clone through gitaway remembers its profile. For a repository you cloned before, run `gitaway use home` inside it.
 
-Away from home, the same commands go through the tunnel. Nothing changes in how you use them. If the tunnel can't reach your server, gitaway says why after git's own error, for example:
+Away from home, the same commands go through the tunnel. Nothing changes in how you use them. If something goes wrong, `gitaway check` tests the tunnel and says which part failed, and a failed git command is followed by gitaway's explanation, for example:
 
 ```text
 gitaway: 192.0.2.10:2222: no answer from the VPN server at 198.51.100.7:51820 within 10 seconds. Check that the profile's server public key is right, that the server has this device's public key (`gitaway peer`), and that UDP port 51820 reaches it from here
 ```
 
+### If your server wants this device's public key instead
+
+Some servers don't hand out config files: you give them the device's public key. Then let gitaway make the key:
+
+```console
+$ gitaway profile add home \
+    --endpoint vpn.example.net:51820 \
+    --server-public-key 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' \
+    --address 10.0.0.2/32 \
+    --home-ssh 192.0.2.10:2222 \
+    --host 192.0.2.10=10.0.0.1
+$ gitaway peer home        # the [Peer] block to add on the server
+$ gitaway check home       # from another network: tests the tunnel and pins the host key
+```
+
+The [configuration reference](docs/configuration.md) explains each setting.
+
 ## Commands
 
 | Command | Does |
 |---|---|
-| `gitaway profile add [name]` | Create a profile, asking for anything not given as a flag. |
+| `gitaway setup [name]` | Create a profile from the VPN config your server gave this device and a clone URL, and test it. |
+| `gitaway profile add [name]` | Create a profile setting by setting, asking for anything not given as a flag. |
 | `gitaway profile list` | List profiles. The default is marked with `*`. |
 | `gitaway profile show <name>` | Show a profile's file. |
 | `gitaway profile set <name> <key> <value>` | Change one setting, keeping the file's comments. |
@@ -172,7 +188,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 ## Server side
 
 - **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec, and the login protection built into many NAS systems, may count these as failed logins and ban your laptop's address. Allowlist your home network in them. Each check is a single connection, but a busy day of fetches adds up. A banned laptop looks exactly like being away (gitaway quietly uses the tunnel), so `gitaway check` points it out when the server answers through the tunnel but not directly.
-- **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device with the block `gitaway peer` prints.
+- **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device and give `gitaway setup` the config the server makes for it, or add the block `gitaway peer` prints. Preshared keys (`PresharedKey`) aren't supported yet.
 - **The git server must be reachable from the WireGuard server's side of the tunnel.** If WireGuard runs on the git server itself, use the server's tunnel address (such as `10.0.0.1`) in `[hosts]`. If it runs elsewhere on your network and forwards to it, you can map the host to its own LAN address: `"192.0.2.10" = "192.0.2.10"`.
 
 ## Security model

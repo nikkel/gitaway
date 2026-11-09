@@ -79,6 +79,30 @@ pub fn optional<T>(
     }
 }
 
+/// A value with a default: the flag if given; else, in a terminal, asked
+/// with the default filled in; else the default.
+pub fn with_default<T>(
+    flag: Option<String>,
+    flag_name: &str,
+    question: &str,
+    default: &str,
+    parse: impl Fn(&str) -> Result<T, String>,
+) -> Result<T, Error> {
+    if let Some(value) = flag {
+        return parse(&value).map_err(|e| Error::msg(format!("{flag_name}: {e}")));
+    }
+    if !interactive() {
+        return parse(default).map_err(|e| Error::msg(format!("{flag_name}: {e}")));
+    }
+    let answer: String = Input::new()
+        .with_prompt(question)
+        .default(default.to_owned())
+        .validate_with(|input: &String| parse(input).map(|_| ()))
+        .interact_text()
+        .map_err(prompt_error)?;
+    parse(&answer).map_err(Error::msg)
+}
+
 /// Asks a yes/no question, defaulting to no. Not interactive means no.
 pub fn confirm(question: &str) -> Result<bool, Error> {
     if !interactive() {

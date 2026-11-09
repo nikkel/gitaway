@@ -16,6 +16,11 @@
 //! no root, and no other program ever sees the private key. The WireGuard
 //! handshake happens on the first packet, so opening the transport is quick
 //! and the first [`Transport::connect`] includes the handshake.
+//!
+//! [`client_config`] reads the `.conf` files WireGuard servers and apps
+//! hand out.
+
+pub mod client_config;
 
 use std::io;
 use std::iter;

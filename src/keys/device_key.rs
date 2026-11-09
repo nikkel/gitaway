@@ -50,6 +50,12 @@ impl DeviceKey {
 }
 
 impl DeviceKey {
+    /// A second copy, for when one goes to the tunnel and one to the key
+    /// store. Both are wiped when dropped.
+    pub(crate) fn duplicate(&self) -> Self {
+        Self(self.0.clone())
+    }
+
     /// Hands the key to the WireGuard implementation, which keeps it for the
     /// tunnel's lifetime and wipes it when the tunnel is dropped.
     pub(crate) fn into_secret(self) -> StaticSecret {

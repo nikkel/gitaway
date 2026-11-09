@@ -37,6 +37,15 @@ pub enum Command {
     /// Manage this device's WireGuard keys.
     #[command(subcommand)]
     Key(KeyCommand),
+    /// Set up a profile from the VPN config your server gave this device.
+    ///
+    /// Asks for two things: the VPN config file (a WireGuard `.conf`, as
+    /// the server or its app hands out) and a clone URL from your git
+    /// server, as you use it at home. It then finds the git server, through
+    /// the tunnel or, if you're home, directly, and saves its host key so
+    /// gitaway can tell when you're home. Nothing is saved unless that
+    /// works, or you confirm you're home.
+    Setup(SetupArgs),
     /// Test a profile's tunnel and pin its home server's host key.
     ///
     /// At home, with a key pinned, it checks the key directly and stops:
@@ -47,6 +56,33 @@ pub enum Command {
     /// key pinned yet, it offers to pin this one; if the pinned key differs,
     /// it says so and offers to replace it. Finally it runs the home check.
     Check(CheckArgs),
+}
+
+/// `gitaway setup`
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// The new profile's name: lower-case letters, digits, `-` and `_`.
+    /// Defaults to `home`.
+    pub name: Option<String>,
+    /// The VPN config file your server gave this device, or `-` to read it
+    /// from stdin.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<String>,
+    /// A clone URL from your git server, as you use it at home.
+    #[arg(long)]
+    pub url: Option<String>,
+    /// The git server's SSH port, for an http(s) URL. gitaway connects to it
+    /// to recognise home.
+    #[arg(long, value_name = "PORT")]
+    pub ssh_port: Option<String>,
+    /// The git server's address inside the tunnel, if setup can't work it
+    /// out from the config.
+    #[arg(long, value_name = "ADDRESS")]
+    pub inside: Option<String>,
+    /// If the git server answers on this network, take that you're home and
+    /// save its host key without asking.
+    #[arg(long, short)]
+    pub yes: bool,
 }
 
 /// `gitaway check`

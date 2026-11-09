@@ -1,6 +1,6 @@
 # Configuration reference
 
-gitaway's configuration is a few small TOML files. You can create and change them with `gitaway profile` commands, or edit them by hand. Every file is checked when it's loaded, and an unknown setting or a badly formatted value is an error that names the file, line and setting.
+gitaway's configuration is a few small TOML files. `gitaway setup` writes a working profile from the VPN config your server gives a device; you can also create and change profiles with `gitaway profile` commands, or edit them by hand. Every file is checked when it's loaded, and an unknown setting or a badly formatted value is an error that names the file, line and setting.
 
 All values on this page are documentation examples. Use your own.
 
