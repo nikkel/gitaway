@@ -98,7 +98,7 @@ $ gitaway profile set home transport.wireguard.address 10.0.0.2/32
 
 The private key never leaves this device; only the public key goes to the server.
 
-**3. Check the tunnel and pin your home server's host key.** This works from anywhere:
+**3. Check the tunnel and pin your home server's host key.** Do this away from home, for example on your phone's hotspot:
 
 ```console
 $ gitaway check home
@@ -109,7 +109,9 @@ Pinned it in profile `home`.
 Home check: away from home (no answer within 200 ms), so commands use the tunnel.
 ```
 
-The key is fetched through the tunnel, which WireGuard has authenticated, so it's your server's real key even on a café network. Until a key is pinned, commands always use the tunnel. Run `gitaway check` again whenever something seems wrong: it says which part failed. (At home you can also pin the key from `ssh-keyscan`; see [the configuration reference](docs/configuration.md#home).)
+The key is fetched through the tunnel, which WireGuard has authenticated, so it's your server's real key even on a café network. Until a key is pinned, commands always use the tunnel. Run `gitaway check` again whenever something seems wrong: it says which part failed.
+
+At home, `check` verifies the pinned key directly and doesn't try the tunnel: from inside your network, the tunnel would have to go out to your router's public address and back in, which many routers can't do. (At home you can also pin the key from `ssh-keyscan`; see [the configuration reference](docs/configuration.md#home).)
 
 **4. Use git through gitaway.**
 

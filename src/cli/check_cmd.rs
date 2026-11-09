@@ -12,20 +12,28 @@
 //!  run the ordinary home check from here and report it
 //! ```
 //!
+//! The home check runs first. If it passes, the pinned key has just been
+//! verified directly, and the tunnel isn't tried: from inside the home
+//! network it would have to go out to the router's own public address and
+//! back in, which many routers don't do ("hairpin NAT"), and it wouldn't
+//! show how the tunnel behaves away anyway.
+//!
 //! Capturing through the tunnel needs no trust on first use: WireGuard has
 //! already proved the far end is the profile's server, whatever network
 //! this device is on. `ssh-keyscan` on a LAN has no such guarantee.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use toml_edit::value;
 
 use crate::config::name::ProfileName;
-use crate::config::profile::Home;
+use crate::config::profile::{Home, Profile};
 use crate::config::store::Store;
 use crate::config::value::HostKey;
 use crate::error::Error;
 use crate::home_check::{self, AwayReason, Timeouts, Verdict};
+use crate::keys::device_key::DeviceKey;
 use crate::transport;
 
 use super::{away, prompt};
@@ -33,8 +41,8 @@ use super::{away, prompt};
 /// How long the server may take to prove its key, through the tunnel.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Runs `gitaway check`. Exits 0 when the tunnel works and a key is pinned
-/// that matches the server; 1 otherwise.
+/// Runs `gitaway check`. Exits 0 when a key is pinned that matches the
+/// server, proved directly at home or through a working tunnel; 1 otherwise.
 pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
     let profile = store.load_profile(name)?;
     let Some(home) = profile.home.clone() else {
@@ -54,20 +62,29 @@ pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
             ))
         })?;
 
+    // At home the device key isn't needed, so the keychain isn't touched.
+    if home_check::check(&home)? == Verdict::Home {
+        println!(
+            "Home check: you're home, and {} proved the pinned host key directly, so \
+             commands connect to it directly.\n\
+             Tunnel: not tested at home. From inside the home network it would need your \
+             router to reach its own public address, which many can't (no \"hairpin NAT\"). \
+             Run `gitaway check {name}` on another network to test it.",
+            home.ssh
+        );
+        return Ok(0);
+    }
+
     let (_lock, key) = away::take_tunnel(store, name)?;
     let runtime = away::runtime()?;
     let result = runtime.block_on(async {
-        let transport = transport::open(name.as_str(), &profile, key).await?;
-        let stream = transport.connect(target).await?;
-        println!(
-            "Tunnel: works. Reached {} through it, at {target}.",
-            home.ssh
-        );
-        let pinned = home.host_key.as_ref();
-        let seen = home_check::capture(stream, CAPTURE_TIMEOUT, pinned.map(HostKey::algorithm))
+        let seen = capture_through_tunnel(name, &profile, &home, target, key)
             .await
-            .map_err(|e| {
-                Error::msg(format!("{} answered through the tunnel, but {e}", home.ssh))
+            .map_err(|error| {
+                Error::msg(format!(
+                    "{error}\nIf you're on the home network, your router may not be able to reach \
+                     its own public address, so the tunnel can only be tested from another network."
+                ))
             })?;
         let (home, ok) = settle_key(store, name, home, seen, yes)?;
         report_home_check(&home).await;
@@ -75,6 +92,27 @@ pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
     });
     runtime.shutdown_timeout(away::SHUTDOWN_GRACE);
     result
+}
+
+/// Opens the tunnel, reaches the home server at `target` through it, and
+/// returns the host key it proves.
+async fn capture_through_tunnel(
+    name: &ProfileName,
+    profile: &Profile,
+    home: &Home,
+    target: SocketAddr,
+    key: DeviceKey,
+) -> Result<HostKey, Error> {
+    let transport = transport::open(name.as_str(), profile, key).await?;
+    let stream = transport.connect(target).await?;
+    println!(
+        "Tunnel: works. Reached {} through it, at {target}.",
+        home.ssh
+    );
+    let pinned = home.host_key.as_ref();
+    home_check::capture(stream, CAPTURE_TIMEOUT, pinned.map(HostKey::algorithm))
+        .await
+        .map_err(|e| Error::msg(format!("{} answered through the tunnel, but {e}", home.ssh)))
 }
 
 /// Compares the key the server proved with the pinned one, and pins it if

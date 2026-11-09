@@ -71,13 +71,13 @@ How gitaway tells that you're on this place's own network. Without it, gitaway c
 | `ssh` | yes | An SSH server on the home network, as `host` or `host:port` (port 22 if left out). Your git server's SSH port is the natural choice. |
 | `host_key` | to recognise home | That server's public host key, in OpenSSH's one-line format: `<type> <base64>`, optionally followed by a comment. Ed25519, ECDSA and RSA keys are accepted. Until it's set, gitaway can't recognise home, so it always uses the tunnel. |
 
-The easiest way to set the key is `gitaway check`, from anywhere, once the tunnel works:
+The easiest way to set the key is `gitaway check`, away from home, once the tunnel works:
 
 ```console
 $ gitaway check home
 ```
 
-It opens the tunnel, reaches the `ssh` server through it (at its `[hosts]` address), and has the server prove its host key. The tunnel is authenticated by WireGuard, so this is your server's real key even on an untrusted network. It shows the key's fingerprint and asks before pinning it. If a key is already pinned, it confirms it still matches; if it doesn't, it explains the possible reasons and asks before replacing it. `--yes` answers yes for scripts.
+It opens the tunnel, reaches the `ssh` server through it (at its `[hosts]` address), and has the server prove its host key. The tunnel is authenticated by WireGuard, so this is your server's real key even on an untrusted network. It shows the key's fingerprint and asks before pinning it. If a key is already pinned, it confirms it still matches; if it doesn't, it explains the possible reasons and asks before replacing it. `--yes` answers yes for scripts. At home, with a key already pinned, it checks the key directly instead, because many routers can't reach their own public address from inside the network.
 
 Or, on the home network, get the key with `ssh-keyscan` and pass it to `profile add --host-key` or `profile set`:
 

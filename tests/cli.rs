@@ -1120,6 +1120,34 @@ mod away {
     }
 
     #[test]
+    fn check_at_home_verifies_the_key_directly_without_the_tunnel_or_device_key() {
+        let env = Env::new();
+        let (port, server_host_key) = ssh_server(14);
+        let home_ssh = format!("127.0.0.1:{port}");
+        // The endpoint can't be reached, so using the tunnel would fail.
+        env.add_profile(
+            "home",
+            &[
+                "--home-ssh",
+                &home_ssh,
+                "--host-key",
+                &server_host_key,
+                "--host",
+                "127.0.0.1=10.0.0.1",
+            ],
+        );
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("you're home")
+                    .and(predicate::str::contains("Tunnel: not tested at home")),
+            );
+    }
+
+    #[test]
     fn check_needs_to_know_where_home_is_through_the_tunnel() {
         let env = Env::new();
         // 192.0.2.20 isn't in [hosts], so there's no address to try.
