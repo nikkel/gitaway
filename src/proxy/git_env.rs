@@ -251,6 +251,8 @@ mod tests {
         assert_eq!(ssh(Some(""), None, None), "ssh");
     }
 
+    // git runs ssh commands through a POSIX shell, which Windows lacks.
+    #[cfg(unix)]
     #[test]
     fn paths_with_spaces_and_quotes_survive_two_shells() {
         let env = build(
@@ -289,11 +291,6 @@ mod tests {
             .output()
             .unwrap();
         String::from_utf8(out.stdout).unwrap()
-    }
-
-    #[cfg(not(unix))]
-    fn run_sh(_script: &str) -> String {
-        unimplemented!("needs a POSIX shell")
     }
 
     #[test]

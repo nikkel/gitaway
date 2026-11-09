@@ -107,8 +107,14 @@ mod tests {
 
     #[test]
     fn absolute_xdg_config_home_wins() {
-        let dir = ConfigDir::new(Some("/custom".into()), home()).unwrap();
-        assert_eq!(dir.path(), Path::new("/custom/gitaway"));
+        // Absolute means with a drive letter on Windows.
+        let custom = if cfg!(windows) {
+            r"C:\custom"
+        } else {
+            "/custom"
+        };
+        let dir = ConfigDir::new(Some(custom.into()), home()).unwrap();
+        assert_eq!(dir.path(), Path::new(custom).join("gitaway"));
     }
 
     #[test]
