@@ -6,8 +6,8 @@
 //!
 //!   no command, -h, --help ─────────► gitaway's help
 //!   --version ──────────────────────► gitaway's version
-//!   profile, use ───────────────────► gitaway's own commands (clap)
-//!   peer, key, list, tunnel ────────► reserved: "not available yet"
+//!   profile, use, peer, key ────────► gitaway's own commands (clap)
+//!   list, tunnel ───────────────────► reserved: "not available yet"
 //!   network command (push, fetch …) ► network::plan, then git
 //!   anything else ──────────────────► git, exactly as typed
 //! ```
@@ -25,6 +25,7 @@
 //! [`RESERVED_COMMANDS`] if it was reserved.
 
 pub mod args;
+pub mod key_cmd;
 pub mod network;
 pub mod profile_cmd;
 pub mod prompt;
@@ -36,18 +37,20 @@ use clap::Parser;
 
 use crate::config::name::ProfileName;
 use crate::config::paths::ConfigDir;
+use crate::config::resolve::{Inputs, resolve};
 use crate::config::store::Store;
 use crate::error::{EXIT_ERROR, Error};
 use crate::git::classify::{self, Kind};
+use crate::git::repo::Repo;
 use crate::git::runner::Git;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
-pub const OWN_COMMANDS: &[&str] = &["profile", "use"];
+pub const OWN_COMMANDS: &[&str] = &["profile", "use", "peer", "key"];
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
-pub const RESERVED_COMMANDS: &[&str] = &["peer", "key", "list", "tunnel"];
+pub const RESERVED_COMMANDS: &[&str] = &["list", "tunnel"];
 
 const HELP: &str = "\
 gitaway: reach your self-hosted git server from anywhere
@@ -57,6 +60,8 @@ Usage: gitaway [--profile <name>] <command> [args]
 gitaway's own commands:
   profile    Add, list, show, change and remove profiles
   use        Pin the current repository to a profile
+  peer       Print what the WireGuard server needs to know about this device
+  key        Replace this device's WireGuard key (key rotate)
 
 Every other command goes to git. Network commands (clone, fetch, pull, push,
 ls-remote, remote update, submodule update) first check whether you're at the
@@ -101,6 +106,7 @@ pub fn run(args: Vec<OsString>) -> Result<i32, Error> {
         Some(command) if OWN_COMMANDS.contains(&command) => run_own_command(
             &args[invocation.global_options.len()..],
             invocation.global_options,
+            profile_flag.as_ref(),
         ),
         Some(command) if RESERVED_COMMANDS.contains(&command) => Err(Error::msg(format!(
             "`gitaway {command}` isn't available yet; it's planned for a later release"
@@ -123,7 +129,11 @@ pub(crate) fn open_store() -> Result<Store, Error> {
     Ok(Store::new(ConfigDir::from_env()?))
 }
 
-fn run_own_command(args: &[OsString], global_options: &[OsString]) -> Result<i32, Error> {
+fn run_own_command(
+    args: &[OsString],
+    global_options: &[OsString],
+    profile_flag: Option<&ProfileName>,
+) -> Result<i32, Error> {
     let cli = match args::Cli::try_parse_from(
         std::iter::once(OsString::from("gitaway")).chain(args.iter().cloned()),
     ) {
@@ -134,6 +144,63 @@ fn run_own_command(args: &[OsString], global_options: &[OsString]) -> Result<i32
     match cli.command {
         args::Command::Profile(command) => profile_cmd::run(command),
         args::Command::Use(command) => use_cmd::run(command, global_options),
+        args::Command::Peer(command) => {
+            let store = open_store()?;
+            let name = pick_profile(&store, command.profile, profile_flag, global_options)?;
+            key_cmd::peer(&store, &name)
+        }
+        args::Command::Key(args::KeyCommand::Rotate { profile, yes }) => {
+            let store = open_store()?;
+            let name = pick_profile(&store, profile, profile_flag, global_options)?;
+            key_cmd::rotate(&store, &name, yes)
+        }
+    }
+}
+
+/// The profile for a command that takes an optional profile name: the name
+/// given, else `--profile`, `GITAWAY_PROFILE`, `git config gitaway.profile`
+/// or `default_profile`, in that order. There's no remote to match, so the
+/// `[hosts]` rule doesn't apply.
+fn pick_profile(
+    store: &Store,
+    named: Option<String>,
+    profile_flag: Option<&ProfileName>,
+    global_options: &[OsString],
+) -> Result<ProfileName, Error> {
+    let named = named
+        .map(|name| name.parse::<ProfileName>())
+        .transpose()
+        .map_err(|e| Error::msg(e.to_string()))?;
+    let flag = named.as_ref().or(profile_flag);
+    let env = network::env_profile()?;
+    // git config is only a fallback here, so a git that can't run just means
+    // it doesn't name a profile.
+    let git_config = match flag.or(env.as_ref()) {
+        Some(_) => None,
+        None => Repo::new(Git::new(global_options))
+            .profile()
+            .ok()
+            .flatten()
+            .map(|name| name.parse::<ProfileName>())
+            .transpose()
+            .map_err(|e| {
+                Error::msg(format!("git config {}: {e}", crate::git::repo::PROFILE_KEY))
+            })?,
+    };
+    let global = store.load_global()?;
+    let profiles = store.load_profiles()?;
+    let inputs = Inputs {
+        flag,
+        env: env.as_ref(),
+        git_config: git_config.as_ref(),
+        remote: None,
+        default: global.default_profile.as_ref(),
+    };
+    match resolve(inputs, &profiles, |_, _| false)? {
+        Some(resolved) => Ok(resolved.name.clone()),
+        None => Err(Error::msg(
+            "no profile chosen: name one, or set a default with `gitaway profile default <name>`",
+        )),
     }
 }
 

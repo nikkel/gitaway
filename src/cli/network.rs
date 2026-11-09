@@ -114,7 +114,7 @@ fn as_typed(invocation: &Invocation<'_>) -> Vec<OsString> {
 }
 
 /// `GITAWAY_PROFILE`, if set and not empty.
-fn env_profile() -> Result<Option<ProfileName>, Error> {
+pub(crate) fn env_profile() -> Result<Option<ProfileName>, Error> {
     match std::env::var(PROFILE_ENV) {
         Ok(value) if !value.is_empty() => value
             .parse()

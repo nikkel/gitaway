@@ -9,9 +9,11 @@ All values on this page are documentation examples. Use your own.
 ```text
 ~/.config/gitaway/            ($XDG_CONFIG_HOME/gitaway if that's set)
 ├── config.toml               settings that aren't per profile
-└── profiles/
-    ├── home.toml             one file per profile
-    └── office.toml
+├── profiles/
+│   ├── home.toml             one file per profile
+│   └── office.toml
+└── keys/                     device keys, only where there's no OS keychain
+    └── home.key
 ```
 
 The same location is used on Linux, macOS and Windows. On Linux and macOS, gitaway writes files with mode 600 in directories with mode 700. It replaces a file in one step, so an interrupted write never leaves half a file.
@@ -58,7 +60,7 @@ How to reach the place when you're away. The tunnel itself arrives in a later re
 | `address` | no | This device's address inside the tunnel, such as `10.0.0.2/32`. Often assigned by the server's admin after setup, so it can be added later. |
 | `mtu` | no | The tunnel MTU, at least 576. Leave it out unless the default causes trouble. |
 
-The device's private key is never stored in a profile.
+The device's private key is never stored in a profile. See [Device keys](#device-keys).
 
 ### `[home]`
 
@@ -141,9 +143,26 @@ $ gitaway profile set home 'hosts."192.0.2.12"' 10.0.0.4
 
 Keys are dotted paths. Quote a part that contains dots, as in the last example. Numbers and `true`/`false` are stored as such; anything else is stored as text.
 
+## Device keys
+
+Each profile has its own WireGuard private key for this device. `gitaway profile add` creates it, `gitaway peer` prints its public half for the server, `gitaway key rotate` replaces it, and `gitaway profile remove` deletes it.
+
+Keys are kept in the OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet), under the service name `gitaway` and the profile's name. Where there's no keychain, such as on a headless server, gitaway keeps the key in `keys/<profile>.key` in the configuration directory, with mode 600, and warns that it did. A key file other users can read is refused, as `ssh` refuses such files.
+
+`GITAWAY_KEY_STORE` chooses explicitly:
+
+| Value | Where keys go |
+|---|---|
+| unset | The keychain if there is one, otherwise a file |
+| `keychain` | The keychain; an error if there isn't one |
+| `file` | `keys/<profile>.key` |
+
+Keychain entries are named after the profile only, so two configuration directories on one machine (with different `XDG_CONFIG_HOME` values) share keys for profiles with the same name. Use `GITAWAY_KEY_STORE=file` to keep them apart.
+
 ## Environment variables
 
 | Variable | Meaning |
 |---|---|
 | `GITAWAY_PROFILE` | The profile to use, unless `--profile` is given. Empty means unset. |
 | `XDG_CONFIG_HOME` | Where the configuration directory lives. Ignored unless it's an absolute path. |
+| `GITAWAY_KEY_STORE` | Where device keys are kept: `keychain` or `file`. See [Device keys](#device-keys). |

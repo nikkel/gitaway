@@ -5,6 +5,9 @@
 //! `GIT_SSH_COMMAND=false`). On Unix, `git` on `PATH` is a wrapper that logs
 //! each command line and then runs the real git, so tests can check exactly
 //! which git commands gitaway ran, or that it ran none.
+//!
+//! Device keys go to files in the temporary config directory
+//! (`GITAWAY_KEY_STORE=file`), never the real keychain.
 
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
@@ -49,6 +52,7 @@ impl Env {
             .env("GIT_SSH_COMMAND", "false")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GITAWAY_LOG", self.path("git.log"))
+            .env("GITAWAY_KEY_STORE", "file")
             .env("PATH", path)
             .env_remove("GITAWAY_PROFILE")
             .current_dir(self.root.path());
@@ -110,6 +114,11 @@ impl Env {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// The device key file for a profile.
+    fn key_file(&self, name: &str) -> PathBuf {
+        self.path(&format!("config/gitaway/keys/{name}.key"))
+    }
+
     /// Creates a profile with `gitaway profile add`, using flags only.
     fn add_profile(&self, name: &str, extra: &[&str]) {
         self.gitaway()
@@ -153,7 +162,7 @@ mod passthrough {
     #[test]
     fn reserved_commands_are_errors() {
         let env = Env::new();
-        for command in ["list", "tunnel", "peer", "key"] {
+        for command in ["list", "tunnel"] {
             env.gitaway()
                 .arg(command)
                 .assert()
@@ -655,5 +664,210 @@ mod network {
             .assert()
             .code(1)
             .stderr(predicate::str::contains("no [home] section"));
+    }
+}
+
+mod keys {
+    use super::*;
+
+    /// The public key in `gitaway peer`'s block.
+    fn peer_public_key(env: &Env, name: &str) -> String {
+        let out = env.gitaway().args(["peer", name]).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("PublicKey = "))
+            .unwrap_or_else(|| panic!("no PublicKey in {stdout}"))
+            .to_owned()
+    }
+
+    #[test]
+    fn add_creates_a_private_key_that_peer_and_show_agree_on() {
+        let env = Env::new();
+        env.add_profile("home", &["--address", "10.0.0.2/24"]);
+        let key_file = std::fs::read_to_string(env.key_file("home")).unwrap();
+
+        let public = peer_public_key(&env, "home");
+        assert_ne!(
+            key_file.trim(),
+            public,
+            "the private key never leaves the file"
+        );
+        env.gitaway()
+            .args(["peer", "home"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::starts_with("[Peer]")
+                    .and(predicate::str::contains("AllowedIPs = 10.0.0.2/32"))
+                    .and(predicate::str::contains(key_file.trim()).not()),
+            );
+        env.gitaway()
+            .args(["profile", "show", "home"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains(format!("device public key: {public}"))
+                    .and(predicate::str::contains(key_file.trim()).not()),
+            );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(env.key_file("home"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn peer_without_an_address_explains_what_to_do() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        env.gitaway()
+            .args(["peer", "home"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("AllowedIPs = <"))
+            .stderr(predicate::str::contains(
+                "gitaway profile set home transport.wireguard.address",
+            ));
+    }
+
+    #[test]
+    fn peer_uses_the_default_profile_and_needs_one() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        env.gitaway()
+            .arg("peer")
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("no profile chosen"));
+        env.gitaway()
+            .args(["profile", "default", "home"])
+            .assert()
+            .success();
+        env.gitaway()
+            .arg("peer")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("# gitaway profile `home`"));
+    }
+
+    #[test]
+    fn peer_never_creates_a_key() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args(["peer", "home"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("gitaway key rotate home"));
+        assert!(!env.key_file("home").exists());
+    }
+
+    #[test]
+    fn rotate_replaces_the_key_only_when_confirmed() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let before = peer_public_key(&env, "home");
+
+        env.gitaway()
+            .args(["key", "rotate", "home"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("--yes"));
+        assert_eq!(peer_public_key(&env, "home"), before);
+
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("[Peer]"));
+        assert_ne!(peer_public_key(&env, "home"), before);
+    }
+
+    #[test]
+    fn rotate_creates_a_missing_key_without_asking() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args(["key", "rotate", "home"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("Created the device key"));
+        assert!(env.key_file("home").exists());
+    }
+
+    #[test]
+    fn remove_deletes_the_key() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        env.gitaway()
+            .args(["profile", "remove", "home", "--yes"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("and its device key"));
+        assert!(!env.key_file("home").exists());
+    }
+
+    #[test]
+    fn add_keeps_a_leftover_key() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let before = peer_public_key(&env, "home");
+        std::fs::remove_file(env.path("config/gitaway/profiles/home.toml")).unwrap();
+        env.add_profile("home", &[]);
+        assert_eq!(peer_public_key(&env, "home"), before);
+    }
+
+    #[test]
+    fn add_leaves_nothing_behind_if_the_key_cannot_be_saved() {
+        let env = Env::new();
+        // A file where the keys directory should be makes saving the key fail.
+        std::fs::create_dir_all(env.path("config/gitaway")).unwrap();
+        std::fs::write(env.path("config/gitaway/keys"), "").unwrap();
+        env.gitaway()
+            .args([
+                "profile",
+                "add",
+                "home",
+                "--endpoint",
+                "vpn.example.net:51820",
+                "--server-public-key",
+                SERVER_KEY,
+            ])
+            .assert()
+            .code(1);
+        assert!(!env.path("config/gitaway/profiles/home.toml").exists());
+    }
+
+    #[test]
+    fn an_unknown_key_store_setting_is_an_error() {
+        let env = Env::new();
+        env.gitaway()
+            .args([
+                "profile",
+                "add",
+                "home",
+                "--endpoint",
+                "vpn.example.net:51820",
+                "--server-public-key",
+                SERVER_KEY,
+            ])
+            .env("GITAWAY_KEY_STORE", "vault")
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("GITAWAY_KEY_STORE"));
+        assert!(!env.path("config/gitaway/profiles/home.toml").exists());
     }
 }

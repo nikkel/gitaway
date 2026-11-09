@@ -16,6 +16,7 @@ use crate::config::resolve::ResolveError;
 use crate::config::store::StoreError;
 use crate::git::runner::RunError;
 use crate::home_check::CheckError;
+use crate::keys::store::KeyError;
 
 /// The exit code for gitaway's own errors.
 pub const EXIT_ERROR: i32 = 1;
@@ -39,6 +40,9 @@ pub enum Error {
     /// The home check couldn't run.
     #[error(transparent)]
     HomeCheck(#[from] CheckError),
+    /// A device key couldn't be read, saved or deleted.
+    #[error(transparent)]
+    Key(#[from] KeyError),
     /// Anything else, with a message for the user.
     #[error("{0}")]
     Other(String),

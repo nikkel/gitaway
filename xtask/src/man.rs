@@ -31,6 +31,14 @@ const COMMANDS: &[(&str, &str)] = &[
         "use",
         "Pin the current repository to a profile. See gitaway-use(1).",
     ),
+    (
+        "peer",
+        "Print the [Peer] block the WireGuard server needs for this device. See gitaway-peer(1).",
+    ),
+    (
+        "key",
+        "Replace this device's WireGuard key with key rotate. See gitaway-key-rotate(1).",
+    ),
 ];
 
 /// Writes every page into `dir`, creating it if needed. Existing files
@@ -144,7 +152,7 @@ fn main_page() -> String {
         page.item(name, summary);
     }
     page.item(
-        "peer, key, list, tunnel",
+        "list, tunnel",
         "Reserved for later releases. They report that they aren't available yet.",
     );
     page.item("anything else", "Passed to git unchanged.");
@@ -185,6 +193,15 @@ fn main_page() -> String {
          unaffected.",
     );
 
+    page.section("DEVICE KEYS");
+    page.text(
+        "Each profile has its own WireGuard private key, created by gitaway profile add \
+         and kept in the OS keychain (the macOS Keychain, the Windows Credential \
+         Manager or the Secret Service on Linux). Where there's no keychain, it's kept \
+         in a file readable only by you. Only gitaway key rotate replaces it, and \
+         gitaway peer prints the public half for the server.",
+    );
+
     page.section("HOME CHECK");
     page.text(
         "gitaway connects to the SSH server in the profile's [home] section and \
@@ -204,6 +221,11 @@ fn main_page() -> String {
         "$XDG_CONFIG_HOME/gitaway/profiles/name.toml",
         "One file per profile. Written with mode 600 in a directory with mode 700.",
     );
+    page.item(
+        "$XDG_CONFIG_HOME/gitaway/keys/name.key",
+        "A profile's device key, only when it isn't kept in the OS keychain. Mode 600; \
+         a key file other users can read is refused.",
+    );
 
     page.section("ENVIRONMENT");
     page.item(
@@ -213,6 +235,11 @@ fn main_page() -> String {
     page.item(
         "XDG_CONFIG_HOME",
         "Where the configuration directory lives.",
+    );
+    page.item(
+        "GITAWAY_KEY_STORE",
+        "Where device keys are kept: keychain (the OS keychain) or file (the keys \
+         directory). Unset means the keychain if there is one, else a file.",
     );
 
     page.section("EXIT STATUS");
@@ -231,7 +258,10 @@ fn main_page() -> String {
     ]);
 
     page.section("SEE ALSO");
-    page.text("gitaway-profile(1), gitaway-use(1), git(1), ssh-keyscan(1)");
+    page.text(
+        "gitaway-profile(1), gitaway-use(1), gitaway-peer(1), gitaway-key-rotate(1), \
+         git(1), ssh-keyscan(1)",
+    );
 
     page.roff.to_roff()
 }
@@ -307,6 +337,8 @@ mod tests {
             "gitaway-use.1",
             "gitaway-profile.1",
             "gitaway-profile-add.1",
+            "gitaway-peer.1",
+            "gitaway-key-rotate.1",
         ] {
             assert!(pages.contains_key(name), "{name} missing");
         }

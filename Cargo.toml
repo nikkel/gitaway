@@ -12,8 +12,10 @@ categories = ["command-line-utilities", "development-tools"]
 include = ["/src", "/README.md", "/CHANGELOG.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 
 [dependencies]
+base64 = "0.22.1"
 clap = { version = "4.6.7", features = ["derive"] }
 dialoguer = { version = "0.12.0", default-features = false }
+keyring = "4.2"
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
@@ -21,6 +23,8 @@ thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt", "net", "time"] }
 toml = "1.2.1"
 toml_edit = "0.25.19"
+x25519-dalek = { version = "2.0.1", features = ["static_secrets", "getrandom"] }
+zeroize = "1"
 
 [lints]
 workspace = true

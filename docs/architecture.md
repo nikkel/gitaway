@@ -49,8 +49,8 @@ gitaway [--profile <name>] [git global options] <command> [args]
 │
 ├─ nothing, -h, --help ───────────────▶ gitaway's short help
 ├─ --version ─────────────────────────▶ gitaway's version
-├─ profile, use ──────────────────────▶ gitaway's own commands
-├─ peer, key, list, tunnel ───────────▶ "not available yet" (reserved)
+├─ profile, use, peer, key ───────────▶ gitaway's own commands
+├─ list, tunnel ──────────────────────▶ "not available yet" (reserved)
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
 │   remote update, submodule update)                           └─ not home ─▶ error with the reason
@@ -83,6 +83,7 @@ The exchange is given 1 second. A match means home; anything else (a different k
 | `src/git/` | Everything about git: classifying a command line, parsing remote URLs, reading a repository's remotes and config, and running git. |
 | `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies. |
 | `src/home_check.rs` | The home check. |
+| `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |

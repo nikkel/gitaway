@@ -28,6 +28,40 @@ pub enum Command {
     Profile(ProfileCommand),
     /// Pin the current repository to a profile.
     Use(UseArgs),
+    /// Print what the WireGuard server needs to know about this device.
+    ///
+    /// Prints a `[Peer]` block for the server's configuration: this device's
+    /// public key and tunnel address. The private key never leaves this
+    /// device.
+    Peer(PeerArgs),
+    /// Manage this device's WireGuard keys.
+    #[command(subcommand)]
+    Key(KeyCommand),
+}
+
+/// `gitaway peer`
+#[derive(Debug, Args)]
+pub struct PeerArgs {
+    /// The profile. Defaults to the one this repository or your settings
+    /// choose.
+    pub profile: Option<String>,
+}
+
+/// `gitaway key …`
+#[derive(Debug, Subcommand)]
+pub enum KeyCommand {
+    /// Replace a profile's device key with a new one.
+    ///
+    /// The server must then be given the new public key, which this prints:
+    /// until it is, the tunnel for this profile won't connect.
+    Rotate {
+        /// The profile. Defaults to the one this repository or your settings
+        /// choose.
+        profile: Option<String>,
+        /// Don't ask for confirmation.
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// `gitaway profile …`
@@ -42,7 +76,7 @@ pub enum ProfileCommand {
         /// The profile to show.
         name: String,
     },
-    /// Delete a profile.
+    /// Delete a profile and its device key.
     Remove {
         /// The profile to delete.
         name: String,

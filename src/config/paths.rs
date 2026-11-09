@@ -78,6 +78,17 @@ impl ConfigDir {
     pub fn profile_file(&self, name: &ProfileName) -> PathBuf {
         self.profiles_dir().join(format!("{name}.toml"))
     }
+
+    /// The directory for device keys, when they're kept in files rather than
+    /// the OS keychain.
+    pub fn keys_dir(&self) -> PathBuf {
+        self.root.join("keys")
+    }
+
+    /// The key file for one profile.
+    pub fn key_file(&self, name: &ProfileName) -> PathBuf {
+        self.keys_dir().join(format!("{name}.key"))
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +133,10 @@ mod tests {
         assert_eq!(
             dir.profile_file(&name),
             Path::new("/home/alice/.config/gitaway/profiles/office.toml")
+        );
+        assert_eq!(
+            dir.key_file(&name),
+            Path::new("/home/alice/.config/gitaway/keys/office.key")
         );
     }
 }

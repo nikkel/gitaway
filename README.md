@@ -89,7 +89,27 @@ $ gitaway profile add home \
 
 The `--endpoint` and `--server-public-key` are your home WireGuard server's public address and key. The `--host` entries list the servers this profile handles: the address in your remote URLs, and the server's address inside the tunnel.
 
-**3. Use git through gitaway.**
+This also creates the profile's own WireGuard key for this device, kept in your OS keychain.
+
+**3. Tell your WireGuard server about this device.**
+
+```console
+$ gitaway peer home
+[Peer]
+# gitaway profile `home`
+PublicKey = hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=
+AllowedIPs = <a free tunnel address for this device>/32
+```
+
+Add the block to your server's WireGuard configuration with a free address in `AllowedIPs`, then save that address in the profile:
+
+```console
+$ gitaway profile set home transport.wireguard.address 10.0.0.2/32
+```
+
+The private key never leaves this device; only the public key goes to the server.
+
+**4. Use git through gitaway.**
 
 ```console
 $ git away clone ssh://git@192.0.2.10:2222/alice/app.git
@@ -117,11 +137,13 @@ Reaching it from elsewhere needs the tunnel, which isn't built yet
 | `gitaway profile show <name>` | Show a profile's file. |
 | `gitaway profile set <name> <key> <value>` | Change one setting, keeping the file's comments. |
 | `gitaway profile default <name>` | Make a profile the default. |
-| `gitaway profile remove <name>` | Delete a profile. |
+| `gitaway profile remove <name>` | Delete a profile and its device key. |
 | `gitaway use <name>` | Pin the current repository to a profile. |
+| `gitaway peer [name]` | Print the `[Peer]` block your WireGuard server needs for this device. |
+| `gitaway key rotate [name]` | Replace the profile's device key. The server needs the new public key afterwards. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and with a packaged install, `man gitaway` covers the rest. Planned: `peer` (print what your server's admin needs), `key rotate`, `list` (your repositories on the forge) and `tunnel`.
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and with a packaged install, `man gitaway` covers the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
 
 ## Configuration
 
@@ -151,7 +173,8 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 
 - **What the home check proves:** that the server you're talking to holds the private key for the pinned host key. That's the same guarantee as SSH's `known_hosts`. It doesn't log in and sends no credentials.
 - **Where the pinned key comes from matters.** If you capture it on a network an attacker controls, you could pin the attacker's key. Capture it at home, or read it from the server itself. (From the tunnel release, gitaway can capture it through the tunnel, where WireGuard has already authenticated the server.)
-- **Profiles hold no secrets.** They contain public keys and addresses. The tunnel's private key will live in your OS keychain, never in a profile or in `~/.ssh`.
+- **Profiles hold no secrets.** They contain public keys and addresses.
+- **Each profile has its own device key**, a WireGuard private key kept in your OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux. On a machine without one, such as a headless server, it's kept in a file only you can read, and gitaway says so. Set `GITAWAY_KEY_STORE=file` to choose files. The key is never written to a profile, `~/.ssh`, logs, command lines or the environment, and only `gitaway key rotate` replaces it.
 - **git authentication is unchanged.** gitaway never sees your SSH keys, passwords or tokens. git and ssh handle them as usual.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

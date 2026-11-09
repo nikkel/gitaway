@@ -1,6 +1,9 @@
 //! `gitaway profile …`: add, list, show, remove, set the default, and change
 //! single settings.
 //!
+//! `add` also creates the profile's device key, and `remove` deletes it (see
+//! [`crate::keys`]).
+//!
 //! All file access goes through [`crate::config::store::Store`], so every
 //! write is atomic and every change is validated before it's saved.
 //!
@@ -19,7 +22,11 @@ use crate::config::store::{Store, StoreError};
 use crate::config::value::{HostKey, InterfaceAddress, WireGuardPublicKey};
 use crate::error::Error;
 
+use crate::keys::device_key::DeviceKey;
+use crate::keys::store::KeyStore;
+
 use super::args::{AddArgs, ProfileCommand};
+use super::key_cmd::warn_if_fallback;
 use super::prompt;
 
 /// Runs a `gitaway profile` command.
@@ -130,7 +137,16 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
         home,
         hosts,
     };
+    let keys = KeyStore::from_env(store.dir().clone())?;
     store.create_profile(&name, &build_profile(&new).to_string())?;
+    let key_message = match ensure_device_key(&keys, &name) {
+        Ok(message) => message,
+        Err(e) => {
+            // Without a key the profile can't be used, so don't leave it half made.
+            store.remove_profile(&name)?;
+            return Err(e);
+        }
+    };
     if args.default {
         set_default(store, &name)?;
     }
@@ -139,6 +155,9 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
         "Created profile `{name}` ({}).",
         store.dir().profile_file(&name).display()
     );
+    println!("{key_message}");
+    warn_if_fallback(&keys, &name);
+    println!("Run `gitaway peer {name}` to see what to add to your WireGuard server.");
     if let Some((_, key)) = &new.home {
         println!(
             "Home host key fingerprint: {}\n  Compare it on the server with `ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub`.",
@@ -155,6 +174,23 @@ fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
         );
     }
     Ok(())
+}
+
+/// Creates the profile's device key, or keeps one left over from an earlier
+/// profile with the same name (the server may already know it). Returns a
+/// line saying which.
+fn ensure_device_key(keys: &KeyStore, name: &ProfileName) -> Result<String, Error> {
+    if let Some(existing) = keys.load(name)? {
+        return Ok(format!(
+            "Kept the existing device key for `{name}` (public key {}).",
+            existing.public_key()
+        ));
+    }
+    keys.save(name, &DeviceKey::generate())?;
+    Ok(format!(
+        "Created a device key, stored in {}.",
+        keys.location(name)
+    ))
 }
 
 /// Builds the profile file. Validation happens when the store saves it.
@@ -222,6 +258,11 @@ fn show(store: &Store, name: &ProfileName) -> Result<(), Error> {
             home.host_key.fingerprint()
         );
     }
+    let keys = KeyStore::from_env(store.dir().clone())?;
+    match keys.load(name)? {
+        Some(key) => println!("# device public key: {}", key.public_key()),
+        None => println!("# no device key: create one with `gitaway key rotate {name}`"),
+    }
     Ok(())
 }
 
@@ -235,20 +276,27 @@ fn remove(store: &Store, name: &ProfileName, yes: bool) -> Result<(), Error> {
                 "pass --yes to remove a profile when not running in a terminal",
             ));
         }
-        if !prompt::confirm(&format!("Remove profile `{name}`?"))? {
+        if !prompt::confirm(&format!("Remove profile `{name}` and its device key?"))? {
             println!("Nothing removed.");
             return Ok(());
         }
     }
+    // The key goes first: if that fails, the profile is still there to retry with.
+    let had_key = KeyStore::from_env(store.dir().clone())?.delete(name)?;
     store.remove_profile(name)?;
+    let what = if had_key {
+        format!("profile `{name}` and its device key")
+    } else {
+        format!("profile `{name}`")
+    };
     if store.load_global()?.default_profile.as_ref() == Some(name) {
         store.update_global(|doc| {
             doc.remove("default_profile");
             Ok(())
         })?;
-        println!("Removed profile `{name}`. It was the default, so there's no default now.");
+        println!("Removed {what}. It was the default, so there's no default now.");
     } else {
-        println!("Removed profile `{name}`.");
+        println!("Removed {what}.");
     }
     Ok(())
 }

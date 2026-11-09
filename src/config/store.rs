@@ -5,10 +5,9 @@
 //!
 //! # Safety guarantees
 //!
-//! - **No half-written files.** Every write goes to a temporary file in the
-//!   same directory, is flushed to disk, then renamed over the old file. A
-//!   rename within one directory is atomic, so after a crash or power cut the
-//!   file holds either the old contents or the new, never a mix.
+//! - **No half-written files.** Every write is atomic (see
+//!   `config::private_fs`): after a crash or power cut the file holds either
+//!   the old contents or the new, never a mix.
 //! - **No invalid files.** Edits are made on the TOML document (so the user's
 //!   comments and layout survive) and the result is validated as a profile
 //!   before anything is written. An invalid edit changes nothing.
@@ -27,13 +26,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use toml_edit::DocumentMut;
 
 use super::name::ProfileName;
 use super::paths::ConfigDir;
+use super::private_fs;
 use super::profile::{GlobalConfig, ParseError, Profile};
 
 /// Something went wrong reading or writing configuration files.
@@ -248,33 +248,11 @@ fn read_optional(path: &Path) -> Result<Option<String>, StoreError> {
     }
 }
 
-/// Replaces `path` with `text` atomically: write a temporary file next to it,
-/// flush it to disk, then rename it into place. Creates parent directories
-/// (mode 700 on Unix) if needed. The temporary file is mode 600 on Unix and is
-/// deleted automatically if anything fails before the rename.
 fn write_atomic(path: &Path, text: &str) -> Result<(), StoreError> {
-    let io_err = |source| StoreError::Io {
+    private_fs::write_atomic(path, text.as_bytes()).map_err(|source| StoreError::Io {
         path: path.to_owned(),
         source,
-    };
-    let parent = path
-        .parent()
-        .ok_or_else(|| io_err(io::Error::other("no parent directory")))?;
-    create_private_dir(parent).map_err(io_err)?;
-
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(io_err)?;
-    temp.write_all(text.as_bytes()).map_err(io_err)?;
-    temp.as_file().sync_all().map_err(io_err)?;
-    temp.persist(path).map_err(|e| io_err(e.error))?;
-    Ok(())
-}
-
-fn create_private_dir(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
+    })
 }
 
 #[cfg(test)]

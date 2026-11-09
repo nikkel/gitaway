@@ -10,7 +10,7 @@
 //! - [`profile`] defines the profile format and validates it.
 //! - [`value`] holds the validated value types profiles use (host keys, WireGuard keys, addresses).
 //! - [`resolve`] picks the profile for a command.
-//! - [`store`] loads and saves the files, safely.
+//! - [`store`] loads and saves the files, safely, using `private_fs` for atomic, private writes.
 //!
 //! Secrets never appear in these files. They live in the OS keychain.
 //!
@@ -22,6 +22,7 @@
 
 pub mod name;
 pub mod paths;
+pub(crate) mod private_fs;
 pub mod profile;
 pub mod resolve;
 pub mod store;

@@ -9,6 +9,8 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 
 /// A value in a profile didn't have the expected format.
@@ -108,11 +110,23 @@ impl fmt::Display for HostKey {
 #[serde(try_from = "String")]
 pub struct WireGuardPublicKey(String);
 
+impl WireGuardPublicKey {
+    /// The key for 32 raw bytes.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(BASE64.encode(bytes))
+    }
+
+    /// The key's 32 raw bytes.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        decode_32_bytes(&self.0).expect("validated when created")
+    }
+}
+
 impl FromStr for WireGuardPublicKey {
     type Err = InvalidValue;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if is_base64_of_32_bytes(s) {
+        if decode_32_bytes(s).is_some() {
             Ok(Self(s.to_owned()))
         } else {
             Err(InvalidValue::new(
@@ -187,24 +201,11 @@ impl TryFrom<String> for InterfaceAddress {
     }
 }
 
-/// Whether `s` is standard base64 encoding exactly 32 bytes: 43 characters
-/// and a final `=`.
-///
-/// 32 bytes is 256 bits, but 43 base64 characters hold 258. The last
-/// character's two spare bits must be zero, which only these characters
-/// satisfy. Checking that rejects strings that are the right length but can't
-/// have come from a real key.
-fn is_base64_of_32_bytes(s: &str) -> bool {
-    const LAST_CHARS: &[u8] = b"AEIMQUYcgkosw048";
-    let Some(body) = s.strip_suffix('=') else {
-        return false;
-    };
-    let bytes = body.as_bytes();
-    bytes.len() == 43
-        && bytes
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-        && LAST_CHARS.contains(&bytes[42])
+/// Decodes standard, padded base64 holding exactly 32 bytes. The decoder
+/// rejects non-canonical encodings (spare bits that aren't zero), so a string
+/// that's the right length but can't have come from a real key is refused.
+fn decode_32_bytes(s: &str) -> Option<[u8; 32]> {
+    BASE64.decode(s).ok()?.try_into().ok()
 }
 
 #[cfg(test)]
@@ -254,6 +255,14 @@ mod tests {
         ] {
             assert!(bad.parse::<WireGuardPublicKey>().is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn wireguard_public_keys_round_trip_through_bytes() {
+        let bytes: [u8; 32] = std::array::from_fn(|i| i as u8 * 7);
+        let key = WireGuardPublicKey::from_bytes(bytes);
+        assert_eq!(key.to_bytes(), bytes);
+        assert_eq!(key.to_string().parse::<WireGuardPublicKey>().unwrap(), key);
     }
 
     #[test]
