@@ -1,0 +1,53 @@
+# cargo deny settings: run `cargo deny check` before a release.
+#
+# Licences: every licence below is permissive or file-level copyleft
+# (MPL-2.0, for gotatun), so gitaway stays MIT OR Apache-2.0. A new licence
+# needs checking before it's added here.
+
+[graph]
+all-features = false
+
+[advisories]
+# Each ignore says why it doesn't apply; keep this in step with
+# .cargo/audit.toml.
+ignore = [
+    # rsa "Marvin attack": a timing attack on RSA decryption with a private
+    # key. gitaway only verifies RSA host-key signatures. russh pins
+    # rsa =0.10.0-rc.18.
+    "RUSTSEC-2023-0071",
+    # zvariant, zbus_names and zvariant_derive "unmaintained": not a flaw,
+    # they were merged into zbus 6. They come from keyring 4.2's Secret
+    # Service store, which is still on zbus 5. Remove when keyring moves.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Several crates exist in two major versions while the RustCrypto
+# ecosystem moves; that's expected, not an error.
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
