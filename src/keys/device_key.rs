@@ -3,12 +3,16 @@
 //! A [`DeviceKey`] is wiped from memory when it's dropped, never printed
 //! (its `Debug` output shows only the public key), and leaves this type only
 //! as base64 text on its way into a key store.
+//!
+//! The key type is gotatun's own re-export of `x25519-dalek`, so the key
+//! handed to the tunnel is always the type gotatun expects, whichever
+//! version it uses.
 
 use std::fmt;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use x25519_dalek::{PublicKey, StaticSecret};
+use gotatun::x25519::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 use crate::config::value::WireGuardPublicKey;
@@ -24,8 +28,16 @@ pub struct InvalidKey;
 impl DeviceKey {
     /// A new random key from the operating system's secure random number
     /// generator.
+    ///
+    /// # Panics
+    ///
+    /// If the operating system can't provide random numbers, which leaves
+    /// no safe way to make a key.
     pub fn generate() -> Self {
-        Self(StaticSecret::random())
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        getrandom::fill(bytes.as_mut())
+            .expect("the operating system's random number generator failed");
+        Self(StaticSecret::from(*bytes))
     }
 
     /// The public key, which is what the WireGuard server is told about.

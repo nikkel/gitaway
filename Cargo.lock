@@ -311,6 +311,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1295,11 +1301,11 @@ name = "gitaway"
 version = "0.1.0-alpha.1"
 dependencies = [
  "assert_cmd",
- "base64",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "dialoguer",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "gotatun",
  "ipnetwork",
  "keyring",
@@ -1313,7 +1319,6 @@ dependencies = [
  "tokio",
  "toml",
  "toml_edit",
- "x25519-dalek",
  "zeroize",
 ]
 
@@ -1324,7 +1329,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d40029d208ab17a3280079618d4e7c4ef204e2cb3e137d4f7da570a7efe1c21"
 dependencies = [
  "aead 0.5.2",
- "base64",
+ "base64 0.22.1",
  "bitfield-struct",
  "blake2 0.10.6",
  "bytes",
