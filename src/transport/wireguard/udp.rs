@@ -18,6 +18,9 @@
 //! leave the tunnel deaf. [`SkipResets`] drops those errors and keeps
 //! receiving. Other systems don't report them on unconnected sockets, so it
 //! changes nothing there.
+//!
+//! Reported upstream as <https://github.com/mullvad/gotatun/issues/226>.
+//! Once gotatun handles it, this module can go: use `with_default_udp` again.
 
 use std::io;
 use std::net::SocketAddr;

@@ -1,5 +1,7 @@
 # gitaway
 
+![A house at home and a laptop at a café, joined by a git branch line that passes safely through a tunnel between them](assets/banner.png)
+
 [![CI](https://github.com/nikkel/gitaway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nikkel/gitaway/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/nikkel/gitaway)](#license)
 
