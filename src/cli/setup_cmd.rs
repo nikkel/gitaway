@@ -34,7 +34,7 @@ use crate::error::Error;
 use crate::git::remote_url::{self, RemoteUrl, Scheme};
 use crate::home_check::{self, Timeouts};
 use crate::keys::device_key::DeviceKey;
-use crate::keys::store::KeyStore;
+use crate::keys::store::{DeviceSecrets, KeyStore};
 use crate::transport::client_config::{self, ClientConfig};
 use crate::transport::{self as tunnel, TransportError};
 
@@ -77,6 +77,10 @@ pub fn run(store: &Store, args: SetupArgs) -> Result<i32, Error> {
         Some(key) => key,
         None => ask_private_key(&config)?,
     };
+    let secrets = DeviceSecrets {
+        key,
+        preshared_key: config.preshared_key.take(),
+    };
     let (url, url_text) = prompt::required(
         args.url,
         "--url",
@@ -118,7 +122,15 @@ pub fn run(store: &Store, args: SetupArgs) -> Result<i32, Error> {
         )));
     }
 
-    let found = find_git_server(&name, &config, &key, &url, ssh.as_ref(), &likely, args.yes)?;
+    let found = find_git_server(
+        &name,
+        &config,
+        &secrets,
+        &url,
+        ssh.as_ref(),
+        &likely,
+        args.yes,
+    )?;
 
     let new = NewProfile {
         transport: config.transport,
@@ -135,7 +147,7 @@ pub fn run(store: &Store, args: SetupArgs) -> Result<i32, Error> {
         )],
     };
     store.create_profile(&name, &build_profile(&new).to_string())?;
-    if let Err(e) = keys.save(&name, &key) {
+    if let Err(e) = keys.save(&name, &secrets) {
         // Without its key the profile can't be used, so don't leave it half made.
         store.remove_profile(&name)?;
         return Err(e.into());
@@ -180,7 +192,7 @@ pub fn run(store: &Store, args: SetupArgs) -> Result<i32, Error> {
 fn find_git_server(
     name: &ProfileName,
     config: &ClientConfig,
-    key: &DeviceKey,
+    secrets: &DeviceSecrets,
     url: &RemoteUrl,
     ssh: Option<&HostPort>,
     likely: &[IpAddr],
@@ -209,7 +221,7 @@ fn find_git_server(
         (_, seen_here) => runtime.block_on(search_tunnel(
             name,
             config,
-            key.duplicate(),
+            secrets.duplicate(),
             url,
             ssh,
             likely,
@@ -249,7 +261,7 @@ async fn look_directly(ssh: &HostPort) -> Option<HostKey> {
 async fn search_tunnel(
     name: &ProfileName,
     config: &ClientConfig,
-    key: DeviceKey,
+    secrets: DeviceSecrets,
     url: &RemoteUrl,
     ssh: Option<&HostPort>,
     likely: &[IpAddr],
@@ -262,7 +274,7 @@ async fn search_tunnel(
         home: None,
         hosts: HostMap::default(),
     };
-    let transport = tunnel::open(name.as_str(), &profile, key).await?;
+    let transport = tunnel::open(name.as_str(), &profile, secrets).await?;
     let port = ssh.and_then(|ssh| ssh.port).unwrap_or(url.effective_port());
 
     let mut tried = Vec::new();

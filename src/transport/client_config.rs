@@ -31,6 +31,7 @@ use ipnetwork::IpNetwork;
 
 use crate::config::profile::Transport;
 use crate::keys::device_key::DeviceKey;
+use crate::keys::preshared_key::PresharedKey;
 
 use super::wireguard::client_config::WireGuardConfig;
 
@@ -59,6 +60,8 @@ pub struct ClientConfig {
     /// The device's private key, if the config holds one. A config made for
     /// a key the user generated elsewhere doesn't.
     pub key: Option<DeviceKey>,
+    /// The preshared key the server shares with this device, if it uses one.
+    pub preshared_key: Option<PresharedKey>,
     /// The addresses the config sends through the tunnel.
     pub routes: Vec<IpNetwork>,
 }

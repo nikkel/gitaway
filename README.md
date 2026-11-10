@@ -187,7 +187,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 ## Server side
 
 - **The home check makes an SSH connection without logging in.** Tools such as fail2ban or CrowdSec, and the login protection built into many NAS systems, may count these as failed logins and ban your laptop's address. Allowlist your home network in them. Each check is a single connection, but a busy day of fetches adds up. A banned laptop looks exactly like being away (gitaway quietly uses the tunnel), so `gitaway check` points it out when the server answers through the tunnel but not directly.
-- **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device and give `gitaway setup` the config the server makes for it, or add the block `gitaway peer` prints. Preshared keys (`PresharedKey`) aren't supported yet.
+- **A WireGuard server at home, reachable from the internet.** Any standard one works: `wg-quick` on a Linux box, your router's or NAS's VPN server, or a container. Add each device and give `gitaway setup` the config the server makes for it, or add the block `gitaway peer` prints.
 - **The git server must be reachable from the WireGuard server's side of the tunnel.** If WireGuard runs on the git server itself, use the server's tunnel address (such as `10.0.0.1`) in `[hosts]`. If it runs elsewhere on your network and forwards to it, you can map the host to its own LAN address: `"192.0.2.10" = "192.0.2.10"`.
 
 ## Security model

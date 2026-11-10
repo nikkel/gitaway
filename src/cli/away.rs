@@ -25,8 +25,7 @@ use crate::error::Error;
 use crate::git::remote_url::Scheme;
 use crate::git::repo::Repo;
 use crate::git::runner::{Git, exit_code, spawn_error};
-use crate::keys::device_key::DeviceKey;
-use crate::keys::store::KeyStore;
+use crate::keys::store::{DeviceSecrets, KeyStore};
 use crate::proxy::Proxy;
 use crate::proxy::git_env::{self, SshSettings};
 use crate::transport::{self, Transport};
@@ -48,7 +47,7 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 
     let store = super::open_store()?;
     let name = &plan.name;
-    let (_lock, key) = take_tunnel(&store, name)?;
+    let (_lock, secrets) = take_tunnel(&store, name)?;
 
     let repo = Repo::new(Git::new(&plan.global_options));
     let core_ssh_command = repo.ssh_command()?;
@@ -58,7 +57,7 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
     let runtime = runtime()?;
     let result = runtime.block_on(async {
         let transport: Arc<dyn Transport> =
-            Arc::from(transport::open(name.as_str(), &plan.profile, key).await?);
+            Arc::from(transport::open(name.as_str(), &plan.profile, secrets).await?);
         let proxy = Proxy::start(transport, plan.profile.hosts.clone())
             .await
             .map_err(|e| Error::msg(format!("couldn't start the local proxy: {e}")))?;
@@ -100,7 +99,7 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 pub(crate) fn take_tunnel(
     store: &Store,
     name: &ProfileName,
-) -> Result<(ProfileLock, DeviceKey), Error> {
+) -> Result<(ProfileLock, DeviceSecrets), Error> {
     let lock = ProfileLock::acquire(store.dir(), name, || {
         eprintln!(
             "gitaway: another gitaway command is using profile `{name}`'s tunnel; waiting for it to finish…"
@@ -109,13 +108,13 @@ pub(crate) fn take_tunnel(
     .map_err(|e| Error::msg(e.to_string()))?;
 
     let keys = KeyStore::from_env(store.dir().clone())?;
-    let key = keys.load(name)?.ok_or_else(|| {
+    let secrets = keys.load(name)?.ok_or_else(|| {
         Error::msg(format!(
             "profile `{name}` has no device key, so it can't open the tunnel. \
              Create one with `gitaway key rotate {name}` and give the server its public key"
         ))
     })?;
-    Ok((lock, key))
+    Ok((lock, secrets))
 }
 
 /// Starts the small runtime the tunnel and proxy run on.

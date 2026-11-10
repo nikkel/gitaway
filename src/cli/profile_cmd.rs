@@ -23,7 +23,7 @@ use crate::config::value::{HostKey, InterfaceAddress, WireGuardPublicKey};
 use crate::error::Error;
 
 use crate::keys::device_key::DeviceKey;
-use crate::keys::store::KeyStore;
+use crate::keys::store::{DeviceSecrets, KeyStore};
 
 use super::args::{AddArgs, ProfileCommand};
 use super::key_cmd::{print_peer_block, warn_if_fallback};
@@ -200,15 +200,16 @@ fn ensure_device_key(
     name: &ProfileName,
 ) -> Result<(String, WireGuardPublicKey), Error> {
     if let Some(existing) = keys.load(name)? {
-        let public_key = existing.public_key();
+        let public_key = existing.key.public_key();
         let message =
             format!("Kept the existing device key for `{name}` (public key {public_key}).");
         return Ok((message, public_key));
     }
     let key = DeviceKey::generate();
-    keys.save(name, &key)?;
+    let public_key = key.public_key();
+    keys.save(name, &DeviceSecrets::new(key))?;
     let message = format!("Created a device key, stored in {}.", keys.location(name));
-    Ok((message, key.public_key()))
+    Ok((message, public_key))
 }
 
 /// Builds the profile file. Validation happens when the store saves it.
@@ -286,7 +287,12 @@ fn show(store: &Store, name: &ProfileName) -> Result<(), Error> {
     }
     let keys = KeyStore::from_env(store.dir().clone())?;
     match keys.load(name)? {
-        Some(key) => println!("# device public key: {}", key.public_key()),
+        Some(secrets) => {
+            println!("# device public key: {}", secrets.key.public_key());
+            if secrets.preshared_key.is_some() {
+                println!("# preshared key: yes (kept with the device key)");
+            }
+        }
         None => println!("# no device key: create one with `gitaway key rotate {name}`"),
     }
     Ok(())

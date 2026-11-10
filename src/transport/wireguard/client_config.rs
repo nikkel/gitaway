@@ -9,15 +9,15 @@
 //!
 //! [Peer]                       # the server
 //! PublicKey = <base64>         # → transport.wireguard.server_public_key
+//! PresharedKey = <base64>      # → the keychain, with the device key (optional)
 //! Endpoint = vpn.example.net:51820   # → transport.wireguard.endpoint
 //! AllowedIPs = 10.0.0.1/32     # → where the git server may be in the tunnel
 //! ```
 //!
 //! Keys are case-insensitive and `#` starts a comment, as in `wg-quick`.
 //! Settings gitaway has no use for (`DNS`, `PersistentKeepalive`, `PostUp`,
-//! …) are ignored. A config with several `[Peer]` sections, or a
-//! `PresharedKey`, is refused: gitaway connects to one server, and doesn't
-//! keep preshared keys yet.
+//! …) are ignored. A config with several `[Peer]` sections is refused:
+//! gitaway connects to one server.
 
 use std::net::IpAddr;
 
@@ -27,6 +27,7 @@ use crate::address::HostPort;
 use crate::config::profile::{Transport, WireGuard};
 use crate::config::value::{InterfaceAddress, WireGuardPublicKey};
 use crate::keys::device_key::DeviceKey;
+use crate::keys::preshared_key::PresharedKey;
 use crate::transport::client_config::{ClientConfig, ConfigFormat};
 
 /// The WireGuard client config format.
@@ -66,7 +67,7 @@ struct Fields {
     public_key: Option<String>,
     endpoint: Option<String>,
     allowed_ips: Vec<String>,
-    preshared_key: bool,
+    preshared_key: Option<PresharedKey>,
 }
 
 impl Fields {
@@ -120,7 +121,15 @@ impl Fields {
                 (Some(Section::Peer), "publickey") => fields.public_key = Some(value.to_owned()),
                 (Some(Section::Peer), "endpoint") => fields.endpoint = Some(value.to_owned()),
                 (Some(Section::Peer), "allowedips") => fields.allowed_ips.extend(list(value)),
-                (Some(Section::Peer), "presharedkey") => fields.preshared_key = true,
+                (Some(Section::Peer), "presharedkey") => {
+                    if fields.preshared_key.is_some() {
+                        return Err("it has more than one PresharedKey".to_owned());
+                    }
+                    let key = PresharedKey::from_base64(value).map_err(|_| {
+                        format!("the PresharedKey on line {number} isn't a WireGuard preshared key")
+                    })?;
+                    fields.preshared_key = Some(key);
+                }
                 _ => {}
             }
         }
@@ -140,13 +149,6 @@ impl Fields {
                 ));
             }
             _ => return Err("it has more than one [Interface] section".to_owned()),
-        }
-        if self.preshared_key {
-            return Err(
-                "it uses a PresharedKey, which gitaway doesn't support yet. \
-                 Ask the server for a config without one"
-                    .to_owned(),
-            );
         }
         let server_public_key: WireGuardPublicKey = self
             .public_key
@@ -196,6 +198,7 @@ impl Fields {
                 mtu,
             }),
             key: self.private_key,
+            preshared_key: self.preshared_key,
             routes,
         })
     }
@@ -367,9 +370,9 @@ mod tests {
             (
                 base.replace(
                     "[Peer]",
-                    "[Peer]\nPresharedKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    &format!("[Peer]\nPresharedKey = {PRESHARED}\nPresharedKey = {PRESHARED}"),
                 ),
-                "PresharedKey",
+                "more than one PresharedKey",
             ),
             (base.replace("[Peer]", "[Peer]\nnonsense"), "line 6 isn't"),
         ];
@@ -380,6 +383,27 @@ mod tests {
                 "expected {expected:?}, got {error:?}"
             );
         }
+    }
+
+    /// An example preshared key (bytes 1 to 32), not a secret.
+    const PRESHARED: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+
+    #[test]
+    fn a_preshared_key_is_read_with_the_device_key() {
+        let text = server_made().replace("[Peer]", &format!("[Peer]\nPresharedKey = {PRESHARED}"));
+        let config = read(&text).unwrap();
+        let preshared = config.preshared_key.expect("the preshared key is read");
+        assert_eq!(preshared.to_base64().as_str(), PRESHARED);
+        assert!(read(&server_made()).unwrap().preshared_key.is_none());
+    }
+
+    #[test]
+    fn a_damaged_preshared_key_is_refused_without_quoting_it() {
+        let damaged = &PRESHARED[..40];
+        let text = server_made().replace("[Peer]", &format!("[Peer]\nPresharedKey = {damaged}"));
+        let error = WireGuardConfig.read(&text).expect_err("refused");
+        assert!(error.contains("isn't a WireGuard preshared key"), "{error}");
+        assert!(!error.contains(&damaged[..20]), "secret echoed: {error}");
     }
 
     #[test]

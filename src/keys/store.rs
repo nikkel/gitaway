@@ -16,6 +16,12 @@
 //!
 //! Key files are refused if other users can read them, as `ssh` does.
 //!
+//! What's stored for a profile is its [`DeviceSecrets`], as text: the
+//! device key in base64 on the first line, then `preshared=<base64>` if the
+//! server uses a preshared key. Both live in one entry, so the macOS
+//! Keychain asks for permission once, not twice, and entries written before
+//! preshared keys existed (just the key) read as before.
+//!
 //! # Extending
 //!
 //! A new place to keep keys is a new [`Backend`] variant, with a branch in
@@ -28,6 +34,7 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 use super::device_key::DeviceKey;
+use super::preshared_key::PresharedKey;
 use crate::config::name::ProfileName;
 use crate::config::paths::ConfigDir;
 use crate::config::private_fs;
@@ -98,6 +105,70 @@ pub enum KeyError {
     NoKeychain,
 }
 
+/// The secrets a profile's tunnel needs, kept together in the key store.
+#[derive(Debug)]
+pub struct DeviceSecrets {
+    /// This device's private key.
+    pub key: DeviceKey,
+    /// The preshared key, if the server uses one for this device.
+    pub preshared_key: Option<PresharedKey>,
+}
+
+impl From<DeviceKey> for DeviceSecrets {
+    fn from(key: DeviceKey) -> Self {
+        Self::new(key)
+    }
+}
+
+/// The label of the preshared key's line in the stored text.
+const PRESHARED_PREFIX: &str = "preshared=";
+
+impl DeviceSecrets {
+    /// Just a device key, with no preshared key.
+    pub fn new(key: DeviceKey) -> Self {
+        Self {
+            key,
+            preshared_key: None,
+        }
+    }
+
+    /// A second copy, for when one goes to the tunnel and one to the key
+    /// store. Both are wiped when dropped.
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            key: self.key.duplicate(),
+            preshared_key: self.preshared_key.as_ref().map(PresharedKey::duplicate),
+        }
+    }
+
+    /// The stored form. The text is wiped when dropped.
+    fn to_text(&self) -> Zeroizing<String> {
+        let mut text = Zeroizing::new(self.key.to_base64().as_str().to_owned());
+        if let Some(preshared) = &self.preshared_key {
+            text.push('\n');
+            text.push_str(PRESHARED_PREFIX);
+            text.push_str(&preshared.to_base64());
+        }
+        text
+    }
+
+    /// Reads the stored form, or `None` if it's damaged.
+    fn from_text(text: &str) -> Option<Self> {
+        let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+        let key = DeviceKey::from_base64(lines.next()?).ok()?;
+        let preshared_key = match lines.next() {
+            None => None,
+            Some(line) => {
+                Some(PresharedKey::from_base64(line.strip_prefix(PRESHARED_PREFIX)?).ok()?)
+            }
+        };
+        if lines.next().is_some() {
+            return None;
+        }
+        Some(Self { key, preshared_key })
+    }
+}
+
 /// Reads and writes device keys, wherever they're kept.
 #[derive(Debug, Clone)]
 pub struct KeyStore {
@@ -150,11 +221,11 @@ impl KeyStore {
         }
     }
 
-    /// The profile's key, or `None` if it has none.
+    /// The profile's secrets, or `None` if it has none.
     ///
     /// With the keychain, a key file is also checked, in case the key was
     /// saved before a keychain was available.
-    pub fn load(&self, name: &ProfileName) -> Result<Option<DeviceKey>, KeyError> {
+    pub fn load(&self, name: &ProfileName) -> Result<Option<DeviceSecrets>, KeyError> {
         if self.backend == Backend::Keychain
             && let Some(text) = keychain_get(name)?
         {
@@ -167,10 +238,10 @@ impl KeyStore {
         }
     }
 
-    /// Saves the profile's key, replacing any it had. With the keychain, an
-    /// old key file for the profile is deleted, so only one key exists.
-    pub fn save(&self, name: &ProfileName, key: &DeviceKey) -> Result<(), KeyError> {
-        let text = key.to_base64();
+    /// Saves the profile's secrets, replacing any it had. With the keychain,
+    /// an old key file for the profile is deleted, so only one copy exists.
+    pub fn save(&self, name: &ProfileName, secrets: &DeviceSecrets) -> Result<(), KeyError> {
+        let text = secrets.to_text();
         match self.backend {
             Backend::Keychain => {
                 keychain_entry(name, "save")?
@@ -204,8 +275,8 @@ impl KeyStore {
     }
 }
 
-fn parse(text: &str, name: &ProfileName, location: &str) -> Result<DeviceKey, KeyError> {
-    DeviceKey::from_base64(text).map_err(|_| KeyError::Damaged {
+fn parse(text: &str, name: &ProfileName, location: &str) -> Result<DeviceSecrets, KeyError> {
+    DeviceSecrets::from_text(text).ok_or_else(|| KeyError::Damaged {
         name: name.clone(),
         location: location.to_owned(),
     })
@@ -312,14 +383,23 @@ mod tests {
         assert!(store.load(&home).unwrap().is_none());
 
         let first = DeviceKey::generate();
-        store.save(&home, &first).unwrap();
+        let first_public = first.public_key();
+        store.save(&home, &DeviceSecrets::new(first)).unwrap();
         let loaded = store.load(&home).unwrap().unwrap();
-        assert_eq!(loaded.public_key(), first.public_key());
+        assert_eq!(loaded.key.public_key(), first_public);
+        assert!(loaded.preshared_key.is_none());
 
-        let second = DeviceKey::generate();
+        let second = DeviceSecrets {
+            key: DeviceKey::generate(),
+            preshared_key: Some(PresharedKey::from_base64(PRESHARED).unwrap()),
+        };
         store.save(&home, &second).unwrap();
         let loaded = store.load(&home).unwrap().unwrap();
-        assert_eq!(loaded.public_key(), second.public_key());
+        assert_eq!(loaded.key.public_key(), second.key.public_key());
+        assert_eq!(
+            loaded.preshared_key.unwrap().to_base64().as_str(),
+            PRESHARED
+        );
 
         assert!(store.delete(&home).unwrap());
         assert!(store.load(&home).unwrap().is_none());
@@ -329,8 +409,8 @@ mod tests {
     #[test]
     fn keys_are_per_profile() {
         let (_temp, store) = file_store();
-        let key = DeviceKey::generate();
-        store.save(&name("home"), &key).unwrap();
+        let secrets = DeviceSecrets::new(DeviceKey::generate());
+        store.save(&name("home"), &secrets).unwrap();
         assert!(store.load(&name("office")).unwrap().is_none());
     }
 
@@ -340,7 +420,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (_temp, store) = file_store();
         let home = name("home");
-        store.save(&home, &DeviceKey::generate()).unwrap();
+        store
+            .save(&home, &DeviceSecrets::new(DeviceKey::generate()))
+            .unwrap();
         let path = store.dir.key_file(&home);
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
@@ -351,6 +433,40 @@ mod tests {
             store.load(&home),
             Err(KeyError::Unprotected { .. })
         ));
+    }
+
+    const PRESHARED: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+
+    #[test]
+    fn a_key_file_written_before_preshared_keys_still_reads() {
+        let (_temp, store) = file_store();
+        let home = name("home");
+        let key = DeviceKey::generate();
+        let text = format!("{}\n", key.to_base64().as_str());
+        private_fs::write_atomic(&store.dir.key_file(&home), text.as_bytes()).unwrap();
+        let loaded = store.load(&home).unwrap().unwrap();
+        assert_eq!(loaded.key.public_key(), key.public_key());
+        assert!(loaded.preshared_key.is_none());
+    }
+
+    #[test]
+    fn stored_text_with_a_bad_second_or_extra_line_is_damaged() {
+        let key = DeviceKey::generate().to_base64();
+        let key = key.as_str();
+        for text in [
+            format!("{key}\n{PRESHARED}"),
+            format!("{key}\npreshared=AAAA"),
+            format!("{key}\npreshared={PRESHARED}\nmore"),
+        ] {
+            assert!(DeviceSecrets::from_text(&text).is_none(), "{text}");
+        }
+        let good = format!("{key}\npreshared={PRESHARED}\n");
+        assert!(
+            DeviceSecrets::from_text(&good)
+                .unwrap()
+                .preshared_key
+                .is_some()
+        );
     }
 
     #[test]

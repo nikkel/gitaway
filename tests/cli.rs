@@ -1023,7 +1023,7 @@ mod away {
         all_flags.extend_from_slice(flags);
         env.add_profile_with_server("home", &server_public, &all_flags);
         let device = env.device_public_key("home");
-        let server = home_server(server_key, &device.parse().unwrap(), ports);
+        let server = home_server(server_key.into(), &device.parse().unwrap(), ports);
         env.gitaway()
             .args([
                 "profile",
@@ -1338,7 +1338,7 @@ mod setup {
         let device = DeviceKey::generate();
         let server_key = DeviceKey::generate();
         let server_public = server_key.public_key().to_string();
-        let server = home_server(server_key, &device.public_key(), ports);
+        let server = home_server(server_key.into(), &device.public_key(), ports);
         let endpoint = format!("127.0.0.1:{}", server.udp_port);
         let config = client_config(env, &device, &server_public, &endpoint);
         (device, config)
@@ -1489,6 +1489,60 @@ mod setup {
                     .and(predicate::str::contains("has added this device")),
             );
         assert!(nothing_saved(&env, "home"));
+    }
+
+    #[test]
+    fn a_preshared_key_from_the_config_is_kept_and_used() {
+        use gitaway::keys::preshared_key::PresharedKey;
+        use gitaway::keys::store::DeviceSecrets;
+        // An example preshared key (bytes 1 to 32), not a secret.
+        const PRESHARED: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+
+        let env = Env::new();
+        let (port, _) = ssh_server(24);
+        let device = DeviceKey::generate();
+        let server_key = DeviceKey::generate();
+        let server_public = server_key.public_key().to_string();
+        // The server refuses any handshake without the same preshared key.
+        let server_secrets = DeviceSecrets {
+            key: server_key,
+            preshared_key: Some(PresharedKey::from_base64(PRESHARED).unwrap()),
+        };
+        let server = home_server(server_secrets, &device.public_key(), &[port]);
+        let endpoint = format!("127.0.0.1:{}", server.udp_port);
+        let config = client_config(&env, &device, &server_public, &endpoint);
+        let text = std::fs::read_to_string(&config)
+            .unwrap()
+            .replace("[Peer]\n", &format!("[Peer]\nPresharedKey = {PRESHARED}\n"));
+        std::fs::write(&config, text).unwrap();
+        let url = format!("ssh://git@192.0.2.10:{port}/alice/app.git");
+
+        env.gitaway()
+            .args(["setup", "--config", config.to_str().unwrap(), "--url", &url])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Tunnel: works"));
+        let shows_preshared = |env: &Env| {
+            env.gitaway()
+                .args(["profile", "show", "home"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("preshared key: yes"));
+        };
+        shows_preshared(&env);
+        // The stored preshared key is used again later.
+        env.gitaway()
+            .args(["check", "home"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("It matches"));
+        // A new device key keeps it: it belongs to the server's entry.
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("preshared key was kept"));
+        shows_preshared(&env);
     }
 
     #[test]

@@ -33,7 +33,7 @@ use crate::config::store::Store;
 use crate::config::value::HostKey;
 use crate::error::Error;
 use crate::home_check::{self, AwayReason, Timeouts, Verdict};
-use crate::keys::device_key::DeviceKey;
+use crate::keys::store::DeviceSecrets;
 use crate::transport;
 
 use super::{away, prompt};
@@ -75,10 +75,10 @@ pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
         return Ok(0);
     }
 
-    let (_lock, key) = away::take_tunnel(store, name)?;
+    let (_lock, secrets) = away::take_tunnel(store, name)?;
     let runtime = away::runtime()?;
     let result = runtime.block_on(async {
-        let seen = capture_through_tunnel(name, &profile, &home, target, key)
+        let seen = capture_through_tunnel(name, &profile, &home, target, secrets)
             .await
             .map_err(|error| {
                 Error::msg(format!(
@@ -101,9 +101,9 @@ async fn capture_through_tunnel(
     profile: &Profile,
     home: &Home,
     target: SocketAddr,
-    key: DeviceKey,
+    secrets: DeviceSecrets,
 ) -> Result<HostKey, Error> {
-    let transport = transport::open(name.as_str(), profile, key).await?;
+    let transport = transport::open(name.as_str(), profile, secrets).await?;
     let stream = transport.connect(target).await?;
     println!(
         "Tunnel: works. Reached {} through it, at {target}.",

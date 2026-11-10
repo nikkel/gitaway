@@ -42,7 +42,7 @@ use super::netstack::{NetStack, PacketPipe};
 use super::{CONNECT_TIMEOUT, ConnectFuture, Stream, Transport, TransportError};
 use crate::config::profile::WireGuard;
 use crate::config::value::WireGuardPublicKey;
-use crate::keys::device_key::DeviceKey;
+use crate::keys::store::DeviceSecrets;
 
 /// WireGuard's usual MTU: fits a 1500-byte link after WireGuard's overhead
 /// on IPv6.
@@ -65,14 +65,16 @@ pub struct Tunnel {
 }
 
 impl Tunnel {
-    /// Starts an interface with `address` and `key`, talking to one peer.
+    /// Starts an interface with `address` and this end's `secrets` (its
+    /// private key, and the preshared key it shares with the peer, if any),
+    /// talking to one peer.
     /// `endpoint` is where to find the peer (a server can leave it out and
     /// learn it from the peer's handshake), and `allowed_ips` the addresses
     /// that may come from and go to it. `listen_port` 0 lets the system pick.
     pub async fn start(
         address: IpAddr,
         mtu: u16,
-        key: DeviceKey,
+        secrets: DeviceSecrets,
         peer_key: &WireGuardPublicKey,
         endpoint: Option<SocketAddr>,
         allowed_ips: &[IpNetwork],
@@ -82,6 +84,9 @@ impl Tunnel {
         let (to_stack, from_stack) = split(pipe, mtu);
         let mut peer = Peer::new(x25519::PublicKey::from(peer_key.to_bytes()))
             .with_allowed_ips(allowed_ips.iter().copied());
+        if let Some(preshared) = &secrets.preshared_key {
+            peer = peer.with_preshared_key(preshared.to_bytes());
+        }
         if let Some(endpoint) = endpoint {
             peer = peer.with_endpoint(endpoint);
         }
@@ -89,7 +94,7 @@ impl Tunnel {
             .with_udp(UdpFactory::default())
             .with_listen_port(listen_port)
             .with_ip_pair(to_stack, from_stack)
-            .with_private_key(key.into_secret())
+            .with_private_key(secrets.key.into_secret())
             .with_peer(peer)
             .build()
             .await
@@ -128,12 +133,12 @@ pub struct WireGuardTransport {
 }
 
 impl WireGuardTransport {
-    /// Starts the tunnel for profile `name`. The device key is handed to
-    /// gotatun and wiped when the tunnel closes.
+    /// Starts the tunnel for profile `name`. The device's secrets are
+    /// handed to gotatun and wiped when the tunnel closes.
     pub async fn open(
         name: &str,
         settings: &WireGuard,
-        key: DeviceKey,
+        secrets: DeviceSecrets,
     ) -> Result<Self, TransportError> {
         let address = settings
             .address
@@ -141,27 +146,34 @@ impl WireGuardTransport {
             .ok_or_else(|| TransportError::NoAddress {
                 profile: name.to_owned(),
             })?;
-        if key.public_key() == settings.server_public_key {
+        if secrets.key.public_key() == settings.server_public_key {
             return Err(TransportError::OwnKey {
                 profile: name.to_owned(),
             });
         }
         let endpoint = resolve_endpoint(settings).await?;
         let mtu = settings.mtu.unwrap_or(DEFAULT_MTU);
-        Self::start(address.ip, mtu, key, &settings.server_public_key, endpoint).await
+        Self::start(
+            address.ip,
+            mtu,
+            secrets,
+            &settings.server_public_key,
+            endpoint,
+        )
+        .await
     }
 
     async fn start(
         address: IpAddr,
         mtu: u16,
-        key: DeviceKey,
+        secrets: DeviceSecrets,
         server_key: &WireGuardPublicKey,
         endpoint: SocketAddr,
     ) -> Result<Self, TransportError> {
         let tunnel = Tunnel::start(
             address,
             mtu,
-            key,
+            secrets,
             server_key,
             Some(endpoint),
             &everything(),
@@ -291,6 +303,8 @@ impl IpRecv for FromStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::device_key::DeviceKey;
+    use crate::keys::preshared_key::PresharedKey;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -312,14 +326,34 @@ mod tests {
         }
     }
 
+    /// An example preshared key (bytes 1 to 32), not a secret.
+    const PRESHARED: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+
+    fn preshared() -> PresharedKey {
+        PresharedKey::from_base64(PRESHARED).unwrap()
+    }
+
     async fn echo_server(client: &WireGuardPublicKey, port: u16) -> EchoServer {
+        echo_server_with(client, None, port).await
+    }
+
+    /// An echo server that also expects `preshared` from the client.
+    async fn echo_server_with(
+        client: &WireGuardPublicKey,
+        preshared: Option<PresharedKey>,
+        port: u16,
+    ) -> EchoServer {
         let key = DeviceKey::generate();
         let public_key = key.public_key();
+        let secrets = DeviceSecrets {
+            key,
+            preshared_key: preshared,
+        };
         let client_only = [IpNetwork::new(CLIENT_ADDRESS.parse().unwrap(), 32).unwrap()];
         let tunnel = Tunnel::start(
             SERVER_ADDRESS.parse().unwrap(),
             1420,
-            key,
+            secrets,
             client,
             None,
             &client_only,
@@ -370,7 +404,7 @@ mod tests {
             let transport = WireGuardTransport::start(
                 CLIENT_ADDRESS.parse().unwrap(),
                 1420,
-                client_key,
+                client_key.into(),
                 &server.public_key,
                 localhost(server.udp_port),
             )
@@ -403,7 +437,7 @@ mod tests {
             let transport = WireGuardTransport::start(
                 CLIENT_ADDRESS.parse().unwrap(),
                 1420,
-                DeviceKey::generate(),
+                DeviceKey::generate().into(),
                 &server.public_key,
                 localhost(server.udp_port),
             )
@@ -427,7 +461,7 @@ mod tests {
             let transport = WireGuardTransport::start(
                 CLIENT_ADDRESS.parse().unwrap(),
                 1420,
-                client_key,
+                client_key.into(),
                 &server.public_key,
                 localhost(server.udp_port),
             )
@@ -443,6 +477,59 @@ mod tests {
             let error = transport.connect(silent).await.err().unwrap();
             assert!(
                 matches!(error, TransportError::Timeout { target } if target == silent),
+                "{error}"
+            );
+        });
+    }
+
+    /// Starts a client for `server` with `client_key`, and the preshared
+    /// key if `with_preshared`.
+    async fn client_for(
+        server: &EchoServer,
+        client_key: DeviceKey,
+        with_preshared: bool,
+    ) -> WireGuardTransport {
+        let secrets = DeviceSecrets {
+            key: client_key,
+            preshared_key: with_preshared.then(preshared),
+        };
+        WireGuardTransport::start(
+            CLIENT_ADDRESS.parse().unwrap(),
+            1420,
+            secrets,
+            &server.public_key,
+            localhost(server.udp_port),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn a_shared_preshared_key_lets_the_tunnel_work() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server_with(&client_key.public_key(), Some(preshared()), 2222).await;
+            let transport = client_for(&server, client_key, true).await;
+            let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
+            let mut stream = transport.connect(target).await.unwrap();
+            stream.write_all(b"ping").await.unwrap();
+            let mut echoed = [0; 4];
+            stream.read_exact(&mut echoed).await.unwrap();
+            assert_eq!(&echoed, b"ping");
+        });
+    }
+
+    #[test]
+    fn a_missing_preshared_key_means_no_handshake() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server_with(&client_key.public_key(), Some(preshared()), 2222).await;
+            let transport = client_for(&server, client_key, false).await;
+            tokio::time::pause();
+            let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
+            let error = transport.connect(target).await.err().unwrap();
+            assert!(
+                matches!(error, TransportError::NoHandshake { .. }),
                 "{error}"
             );
         });
@@ -474,7 +561,7 @@ mod tests {
                 address: Some("10.0.0.2/32".parse().unwrap()),
                 mtu: None,
             };
-            let error = WireGuardTransport::open("home", &settings, key)
+            let error = WireGuardTransport::open("home", &settings, key.into())
                 .await
                 .err()
                 .unwrap();
@@ -495,7 +582,7 @@ mod tests {
                 address: None,
                 mtu: None,
             };
-            let error = WireGuardTransport::open("home", &settings, DeviceKey::generate())
+            let error = WireGuardTransport::open("home", &settings, DeviceKey::generate().into())
                 .await
                 .err()
                 .unwrap();

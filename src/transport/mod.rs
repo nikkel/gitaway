@@ -37,7 +37,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::config::profile::{self, Profile};
-use crate::keys::device_key::DeviceKey;
+use crate::keys::store::DeviceSecrets;
 
 /// How long to wait for a connection through the tunnel, including the VPN
 /// handshake the first connection triggers.
@@ -128,15 +128,15 @@ pub enum TransportError {
     },
 }
 
-/// Opens the profile's tunnel with this device's key.
+/// Opens the profile's tunnel with this device's secrets.
 pub async fn open(
     name: &str,
     profile: &Profile,
-    key: DeviceKey,
+    secrets: DeviceSecrets,
 ) -> Result<Box<dyn Transport>, TransportError> {
     match &profile.transport {
         profile::Transport::WireGuard(settings) => Ok(Box::new(
-            wireguard::WireGuardTransport::open(name, settings, key).await?,
+            wireguard::WireGuardTransport::open(name, settings, secrets).await?,
         )),
     }
 }

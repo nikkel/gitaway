@@ -56,12 +56,13 @@ pub const HOME_TUNNEL_ADDRESS: &str = "10.0.0.1";
 /// The device's address inside the tunnel.
 pub const DEVICE_TUNNEL_ADDRESS: &str = "10.0.0.2";
 
-/// Starts a WireGuard server with `key` that accepts only `device` (a
+/// Starts a WireGuard server with `secrets` (its key, and a preshared key
+/// if the device must have one too) that accepts only `device` (a
 /// WireGuard public key). TCP connections through the tunnel to
 /// 10.0.0.1:<port> are forwarded to 127.0.0.1:<port> for each of `ports`,
 /// as if those servers were on the home network. Runs until the test ends.
 pub fn home_server(
-    key: gitaway::keys::device_key::DeviceKey,
+    secrets: gitaway::keys::store::DeviceSecrets,
     device: &gitaway::config::value::WireGuardPublicKey,
     ports: &[u16],
 ) -> HomeServer {
@@ -82,7 +83,7 @@ pub fn home_server(
             let tunnel = Tunnel::start(
                 HOME_TUNNEL_ADDRESS.parse().unwrap(),
                 1420,
-                key,
+                secrets,
                 &device,
                 None,
                 &allowed,

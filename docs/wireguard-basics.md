@@ -69,4 +69,4 @@ gitaway uses the config differently from the WireGuard app: only gitaway's own g
 - **Two public keys in one config screen.** WireGuard apps show the device's own public key at the top. gitaway needs the server's, the `PublicKey` under `[Peer]`. If you set a profile by hand and mix them up, gitaway says so.
 - **One key on two devices.** A server keeps one connection per key, so two devices sharing a config knock each other off. Give each device its own.
 - **Testing from home.** From inside your home network, the tunnel has to go out to your router's public address and back in. Many routers can't do that ("hairpin NAT"), so test the tunnel from another network, such as your phone's hotspot.
-- **Preshared keys.** Some servers add a `PresharedKey` line, an optional extra secret. gitaway doesn't support it yet, so `setup` says so; ask the server for a config without one.
+- **Preshared keys.** Some servers, such as wg-easy and PiVPN, add a `PresharedKey` line under `[Peer]`: an optional extra secret the server and this device share. Both sides need the same one. `setup` reads it from the config and keeps it with the device key, so there's nothing to do.

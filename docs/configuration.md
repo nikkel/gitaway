@@ -165,6 +165,8 @@ $ gitaway key import home < client.conf
 
 In a terminal, run `gitaway key import home` and paste the key when asked; it isn't shown. Replacing an existing key asks first, or needs `--yes` when the key comes from a pipe. gitaway refuses the server's own private key. A key used by another device or app works, but only one of them can be connected at a time: the server keeps one session per key.
 
+If the server uses a preshared key (a `PresharedKey` line under `[Peer]`, which wg-easy and PiVPN add by default), `gitaway setup` and `gitaway key import` take it from the config and store it with the device key. Importing a bare key keeps the stored preshared key, and `key rotate` keeps it too: it belongs to the server's entry for this device, not to the key pair. `gitaway profile show` says when a profile has one.
+
 Keys are kept in the OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet), under the service name `gitaway` and the profile's name. Where there's no keychain, such as on a headless server, gitaway keeps the key in `keys/<profile>.key` in the configuration directory, with mode 600, and warns that it did. A key file other users can read is refused, as `ssh` refuses such files.
 
 `GITAWAY_KEY_STORE` chooses explicitly:

@@ -5,7 +5,12 @@
 //! `gitaway peer home > peer.conf` saves just the block.
 //!
 //! `peer` never creates a key. Only `key rotate` and `key import` replace
-//! one, and both ask first, so a key can't change by accident. An imported
+//! one, and both ask first, so a key can't change by accident.
+//!
+//! A profile's preshared key, if its server uses one, is stored with the
+//! device key. `key rotate` keeps it. `key import` takes the one in an
+//! imported config (or none, if the config has none), and keeps the stored
+//! one when given a bare key. An imported
 //! key is read from stdin only: a command-line argument would show up in
 //! `ps` and the shell's history.
 
@@ -19,7 +24,8 @@ use crate::config::profile::{Profile, Transport};
 use crate::config::value::WireGuardPublicKey;
 use crate::error::Error;
 use crate::keys::device_key::DeviceKey;
-use crate::keys::store::KeyStore;
+use crate::keys::preshared_key::PresharedKey;
+use crate::keys::store::{DeviceSecrets, KeyStore};
 
 use super::prompt;
 
@@ -27,13 +33,19 @@ use super::prompt;
 pub fn peer(store: &crate::config::store::Store, name: &ProfileName) -> Result<i32, Error> {
     let profile = store.load_profile(name)?;
     let keys = KeyStore::from_env(store.dir().clone())?;
-    let Some(key) = keys.load(name)? else {
+    let Some(secrets) = keys.load(name)? else {
         return Err(Error::msg(format!(
             "profile `{name}` has no device key. Create one with `gitaway key rotate {name}`"
         )));
     };
     eprintln!("Add this peer to the WireGuard server for profile `{name}`:\n");
-    print_peer_block(name, &profile, &key.public_key());
+    print_peer_block(name, &profile, &secrets.key.public_key());
+    if secrets.preshared_key.is_some() {
+        eprintln!(
+            "\nThis profile also uses a preshared key: the server's entry for this device \
+             needs the same one."
+        );
+    }
     Ok(0)
 }
 
@@ -45,7 +57,8 @@ pub fn rotate(
 ) -> Result<i32, Error> {
     let profile = store.load_profile(name)?;
     let keys = KeyStore::from_env(store.dir().clone())?;
-    let replacing = keys.load(name)?.is_some();
+    let existing = keys.load(name)?;
+    let replacing = existing.is_some();
     if replacing && !yes {
         if !prompt::interactive() {
             return Err(Error::msg(
@@ -62,7 +75,10 @@ pub fn rotate(
     }
 
     let key = DeviceKey::generate();
-    keys.save(name, &key)?;
+    let public_key = key.public_key();
+    let preshared_key = existing.and_then(|old| old.preshared_key);
+    let keeps_preshared = preshared_key.is_some();
+    keys.save(name, &DeviceSecrets { key, preshared_key })?;
     warn_if_fallback(&keys, name);
     let action = if replacing { "Replaced" } else { "Created" };
     eprintln!(
@@ -70,7 +86,10 @@ pub fn rotate(
          Give the server this peer, replacing any old one for this device:\n",
         keys.location(name)
     );
-    print_peer_block(name, &profile, &key.public_key());
+    print_peer_block(name, &profile, &public_key);
+    if keeps_preshared {
+        eprintln!("\nThe profile's preshared key was kept: the server's entry needs it too.");
+    }
     Ok(0)
 }
 
@@ -86,7 +105,8 @@ pub fn import(
 ) -> Result<i32, Error> {
     let profile = store.load_profile(name)?;
     let keys = KeyStore::from_env(store.dir().clone())?;
-    let replacing = keys.load(name)?.is_some();
+    let existing = keys.load(name)?;
+    let replacing = existing.is_some();
     if replacing && !yes && !prompt::interactive() {
         return Err(Error::msg(format!(
             "profile `{name}` already has a device key. Pass --yes to replace it \
@@ -96,6 +116,12 @@ pub fn import(
 
     let text = read_private_key_text()?;
     let key = parse_private_key(&text).map_err(Error::msg)?;
+    // A config says whether there's a preshared key; a bare key doesn't.
+    let preshared_key = if is_config(&text) {
+        parse_preshared_key(&text).map_err(Error::msg)?
+    } else {
+        existing.and_then(|old| old.preshared_key)
+    };
     let Transport::WireGuard(wg) = &profile.transport;
     if key.public_key() == wg.server_public_key {
         return Err(Error::msg(
@@ -113,15 +139,20 @@ pub fn import(
             return Ok(0);
         }
     }
-    keys.save(name, &key)?;
+    let public_key = key.public_key();
+    let has_preshared = preshared_key.is_some();
+    keys.save(name, &DeviceSecrets { key, preshared_key })?;
     warn_if_fallback(&keys, name);
+    if has_preshared {
+        eprintln!("The profile uses a preshared key too, stored with the device key.");
+    }
     eprintln!(
         "Imported the device key for `{name}`, stored in {}.\n\
          The server needs this peer. If another device or app uses the same key, don't run\n\
          them at the same time: the server keeps one session per key.\n",
         keys.location(name)
     );
-    print_peer_block(name, &profile, &key.public_key());
+    print_peer_block(name, &profile, &public_key);
     Ok(0)
 }
 
@@ -168,13 +199,36 @@ pub(crate) fn parse_private_key(text: &str) -> Result<DeviceKey, String> {
     })
 }
 
-/// The value of a `PrivateKey = …` line. WireGuard config keys are
-/// case-insensitive.
+/// Whether `text` is a WireGuard config rather than a bare key.
+fn is_config(text: &str) -> bool {
+    text.lines().any(|line| private_key_line(line).is_some())
+}
+
+/// The preshared key in a WireGuard config, if it has one. Errors never
+/// include the text.
+fn parse_preshared_key(text: &str) -> Result<Option<PresharedKey>, String> {
+    let mut found = text
+        .lines()
+        .filter_map(|line| setting(line, "PresharedKey"));
+    match (found.next(), found.next()) {
+        (None, _) => Ok(None),
+        (Some(_), Some(_)) => Err("found more than one PresharedKey line".to_owned()),
+        (Some(value), None) => PresharedKey::from_base64(value)
+            .map(Some)
+            .map_err(|_| "the PresharedKey isn't a WireGuard preshared key".to_owned()),
+    }
+}
+
+/// The value of a `PrivateKey = …` line.
 fn private_key_line(line: &str) -> Option<&str> {
+    setting(line, "PrivateKey")
+}
+
+/// The value of a `name = …` line. WireGuard config keys are
+/// case-insensitive.
+fn setting<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     let (key, value) = line.split_once('=')?;
-    key.trim()
-        .eq_ignore_ascii_case("PrivateKey")
-        .then(|| value.trim())
+    key.trim().eq_ignore_ascii_case(name).then(|| value.trim())
 }
 
 /// Warns that a key went to a file because no keychain was found.
@@ -255,6 +309,23 @@ mod tests {
             let error = public_of(bad).unwrap_err();
             assert!(!error.contains(&PRIVATE[..20]), "secret echoed: {error}");
         }
+    }
+
+    #[test]
+    fn a_configs_preshared_key_is_found_and_bad_ones_are_refused_quietly() {
+        let psk = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+        let config = format!("[Interface]\nPrivateKey = {PRIVATE}\n[Peer]\npresharedkey={psk}\n");
+        assert!(is_config(&config));
+        assert!(!is_config(PRIVATE));
+        let found = parse_preshared_key(&config).unwrap().unwrap();
+        assert_eq!(found.to_base64().as_str(), psk);
+        assert!(parse_preshared_key(PRIVATE).unwrap().is_none());
+
+        let twice = format!("{config}PresharedKey = {psk}\n");
+        assert!(parse_preshared_key(&twice).is_err());
+        let damaged = config.replace(psk, &psk[..40]);
+        let error = parse_preshared_key(&damaged).err().unwrap();
+        assert!(!error.contains(&psk[..20]), "secret echoed: {error}");
     }
 
     #[test]
