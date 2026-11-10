@@ -1,0 +1,18 @@
+# Version updates, grouped and monthly. Security fixes don't wait for this:
+# Dependabot security updates open them as soon as an advisory appears.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dependencies:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,11 @@
+# cargo audit settings. Every ignored advisory says why it doesn't apply to
+# gitaway; remove an entry as soon as the dependency can be upgraded.
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071, rsa "Marvin attack": a timing attack on RSA
+    # decryption with a private key. gitaway only verifies the RSA signatures
+    # of SSH servers' host keys (public-key operations) and never holds an RSA
+    # private key. russh 0.65 pins rsa =0.10.0-rc.18, so it can't be upgraded
+    # until russh is.
+    "RUSTSEC-2023-0071",
+]

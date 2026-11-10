@@ -1,0 +1,27 @@
+name: Audit
+
+# Known vulnerabilities in dependencies: daily, so a new advisory is caught
+# even when nothing here changes, and whenever the dependencies change.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    branches: [main]
+    paths: [Cargo.toml, Cargo.lock, .cargo/audit.toml, .github/workflows/audit.yml]
+  pull_request:
+    paths: [Cargo.toml, Cargo.lock, .cargo/audit.toml, .github/workflows/audit.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Vulnerabilities fail the job; "unmaintained" notices are only shown.
+      - run: cargo audit
