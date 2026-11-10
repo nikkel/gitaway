@@ -167,6 +167,13 @@ fn ssh_reaches_the_server_through_the_tunnel_despite_a_proxyjump() {
     });
 }
 
+/// A path as it can be written inside a git config value. Backslashes
+/// would be read as escapes, and git's shell on Windows takes forward
+/// slashes.
+fn config_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 #[test]
 fn http_goes_through_the_tunnel_and_the_proxy_password_is_never_stored() {
     let sandbox = Sandbox::new();
@@ -175,9 +182,8 @@ fn http_goes_through_the_tunnel_and_the_proxy_password_is_never_stored() {
     std::fs::write(
         sandbox.path("gitconfig"),
         format!(
-            "[credential]\n\thelper = \"!f() {{ echo \\\"$1\\\" >> '{}'; cat >> '{}'; }}; f\"\n",
-            log.display(),
-            log.display()
+            "[credential]\n\thelper = \"!f() {{ echo \\\"$1\\\" >> '{log}'; cat >> '{log}'; }}; f\"\n",
+            log = config_path(&log)
         ),
     )
     .unwrap();
@@ -216,9 +222,8 @@ fn without_the_scoped_helper_git_would_store_the_proxy_password() {
     std::fs::write(
         sandbox.path("gitconfig"),
         format!(
-            "[credential]\n\thelper = \"!f() {{ echo \\\"$1\\\" >> '{}'; cat >> '{}'; }}; f\"\n",
-            log.display(),
-            log.display()
+            "[credential]\n\thelper = \"!f() {{ echo \\\"$1\\\" >> '{log}'; cat >> '{log}'; }}; f\"\n",
+            log = config_path(&log)
         ),
     )
     .unwrap();
