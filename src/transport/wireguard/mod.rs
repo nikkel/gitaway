@@ -18,9 +18,11 @@
 //! and the first [`Transport::connect`] includes the handshake.
 //!
 //! [`client_config`] reads the `.conf` files WireGuard servers and apps
-//! hand out.
+//! hand out. [`udp`] keeps the tunnel's socket receiving after Windows'
+//! "connection reset" errors.
 
 pub mod client_config;
+pub mod udp;
 
 use std::io;
 use std::iter;
@@ -31,11 +33,11 @@ use bytes::BytesMut;
 use gotatun::device::{Device, DeviceBuilder, Peer};
 use gotatun::packet::{Ip, Packet, PacketBufPool};
 use gotatun::tun::{IpRecv, IpSend, MtuWatcher};
-use gotatun::udp::socket::UdpSocketFactory;
 use gotatun::x25519;
 use ipnetwork::IpNetwork;
 use tokio::sync::mpsc;
 
+use self::udp::UdpFactory;
 use super::netstack::{NetStack, PacketPipe};
 use super::{CONNECT_TIMEOUT, ConnectFuture, Stream, Transport, TransportError};
 use crate::config::profile::WireGuard;
@@ -49,7 +51,7 @@ pub const DEFAULT_MTU: u16 = 1420;
 /// How long to wait for the endpoint's DNS lookup.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
-type WgDevice = Device<(UdpSocketFactory, ToStack, FromStack)>;
+type WgDevice = Device<(UdpFactory, ToStack, FromStack)>;
 
 /// A WireGuard interface in userspace: gotatun on top of a [`NetStack`].
 ///
@@ -84,7 +86,7 @@ impl Tunnel {
             peer = peer.with_endpoint(endpoint);
         }
         let device = DeviceBuilder::new()
-            .with_default_udp()
+            .with_udp(UdpFactory::default())
             .with_listen_port(listen_port)
             .with_ip_pair(to_stack, from_stack)
             .with_private_key(key.into_secret())
