@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+
+- On Linux, the tunnel's receive path once again splits the UDP datagrams the kernel merges (GRO), which it had stopped doing since the Windows fix in 0.1.0-alpha.1. Merged datagrams were dropped, which could stall large transfers.
+
 ## [0.1.0-alpha.1] - 2026-11-10
 
 A pre-release for testing. It isn't installed unless asked for by version, and it hasn't had the security review that comes before 0.1.0.
