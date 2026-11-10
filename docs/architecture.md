@@ -128,6 +128,7 @@ The code is in `src/proxy/`: `socks.rs` (the protocol), `mod.rs` (the server and
 | `src/git/` | Everything about git: classifying a command line, parsing remote URLs, reading a repository's remotes and config, and running git. |
 | `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies. |
 | `src/home_check.rs` | The home check. |
+| `src/hardening.rs` | Process hardening at start-up: on Linux, gitaway marks itself not dumpable before it loads a secret. |
 | `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
 | `src/proxy/` | The per-command SOCKS5 proxy git talks to when away, and git's environment for it. |
 | `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, a userspace TCP/IP stack (`netstack.rs`), and readers for the client configs VPN servers hand out (`client_config.rs`), used by `gitaway setup`. See [adding a transport](adding-a-transport.md). |

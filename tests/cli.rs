@@ -1635,3 +1635,56 @@ mod setup {
         }
     }
 }
+
+/// gitaway's memory can't be read by other processes of the same user.
+#[cfg(target_os = "linux")]
+mod hardening {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    /// The kernel gives a non-dumpable process's `/proc/<pid>` files to
+    /// root. As root that can't be told apart, so the test only runs as
+    /// another user (as CI's runners do).
+    #[test]
+    fn a_running_gitaway_is_not_dumpable() {
+        let me = std::fs::metadata("/proc/self/environ").unwrap().uid();
+        if me == 0 {
+            eprintln!("skipped: running as root");
+            return;
+        }
+        let env = Env::new();
+        // Waits for a config on stdin, which never comes until it's killed.
+        let mut child = env
+            .gitaway_std()
+            .args([
+                "setup",
+                "--config",
+                "-",
+                "--url",
+                "ssh://git@192.0.2.10/app.git",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let environ = format!("/proc/{}/environ", child.id());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let owner = loop {
+            let owner = std::fs::metadata(&environ).map(|m| m.uid());
+            if matches!(owner, Ok(0)) || Instant::now() > deadline {
+                break owner;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(
+            owner.unwrap(),
+            0,
+            "gitaway's /proc files still belong to its user"
+        );
+    }
+}

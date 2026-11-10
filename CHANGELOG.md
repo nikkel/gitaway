@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Security
 
+- On Linux, gitaway marks itself not dumpable while it runs: no core dump can write the device key to disk, and other programs running as you can't attach a debugger or read its memory. git and ssh, which gitaway starts, are unaffected. If the system refuses, gitaway warns and carries on.
 - `gitaway setup --config` no longer repeats its value in an error when that value is a key, or a line of a config, rather than a path.
 
 ### Fixed

@@ -87,7 +87,15 @@ Options:
 Run `gitaway <command> --help` for a command's options.";
 
 /// Runs gitaway with the process's arguments and returns the exit code.
+/// The process is hardened first (see [`crate::hardening`]).
 pub fn main() -> i32 {
+    if let Err(e) = crate::hardening::harden_process() {
+        // An extra layer, not the main protection, so it doesn't stop git.
+        eprintln!(
+            "gitaway: warning: couldn't protect gitaway's memory from other programs ({e}); \
+             continuing without it"
+        );
+    }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match run(args) {
         Ok(code) => code,
