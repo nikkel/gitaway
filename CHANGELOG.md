@@ -4,9 +4,14 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Security
+
+- `gitaway setup --config` no longer repeats its value in an error when that value is a key, or a line of a config, rather than a path.
+
 ### Fixed
 
 - On Linux, the tunnel's receive path once again splits the UDP datagrams the kernel merges (GRO), which it had stopped doing since the Windows fix in 0.1.0-alpha.1. Merged datagrams were dropped, which could stall large transfers.
+- `gitaway setup` takes a pasted config that starts with a `#` comment line, instead of reading that line as a file path.
 
 ## [0.1.0-alpha.1] - 2026-11-10
 

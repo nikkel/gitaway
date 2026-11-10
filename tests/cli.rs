@@ -1601,4 +1601,37 @@ mod setup {
         );
         assert!(nothing_saved(&env, "home"));
     }
+
+    /// RFC 7748's published test key, not a secret.
+    const PRIVATE: &str = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo="; // gitleaks:allow
+
+    /// A key typed after `--config` by mistake, alone or as a config line,
+    /// is refused without being repeated, as it would be if read as a path.
+    #[test]
+    fn a_key_given_as_the_config_path_is_never_echoed() {
+        for value in [PRIVATE.to_owned(), format!("PrivateKey = {PRIVATE}")] {
+            let env = Env::new();
+            let out = env
+                .gitaway()
+                .args([
+                    "setup",
+                    "--config",
+                    &value,
+                    "--url",
+                    "ssh://git@192.0.2.10/app.git",
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(1));
+            let shown = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                !shown.contains(&PRIVATE[..20]),
+                "the key was shown: {shown}"
+            );
+        }
+    }
 }

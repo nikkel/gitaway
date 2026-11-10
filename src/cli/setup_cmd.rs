@@ -489,9 +489,21 @@ fn stdin_idle() -> bool {
     false
 }
 
-/// Whether text is a config itself rather than a path to one.
+/// Whether text is a config, or a piece of one, rather than a path: a
+/// section header, a comment, a `Key = value` setting, or a bare key. Such
+/// text may hold the private key, so it must never be read as a path, which
+/// would repeat it in "couldn't open …".
 fn looks_like_config_text(text: &str) -> bool {
-    text.contains('\n') || text.trim_start().starts_with('[')
+    let line = text.trim();
+    let is_setting = line.split_once('=').is_some_and(|(key, _)| {
+        let key = key.trim();
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric())
+    });
+    text.contains('\n')
+        || line.starts_with('[')
+        || line.starts_with('#')
+        || is_setting
+        || DeviceKey::from_base64(line).is_ok()
 }
 
 fn read_error(e: std::io::Error) -> Error {
@@ -669,8 +681,15 @@ mod tests {
     fn config_text_is_told_apart_from_a_path() {
         assert!(looks_like_config_text("[Interface]"));
         assert!(looks_like_config_text("  [Interface]\nPrivateKey = x"));
+        assert!(looks_like_config_text("# laptop, made by the server"));
+        assert!(looks_like_config_text("PrivateKey = AAAA"));
+        assert!(looks_like_config_text(
+            "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=" // gitleaks:allow
+        ));
         assert!(!looks_like_config_text("laptop.conf"));
         assert!(!looks_like_config_text("/tmp/my vpn.conf"));
+        assert!(!looks_like_config_text("./name=value.conf"));
+        assert!(!looks_like_config_text("C:\\vpn\\laptop.conf"));
     }
 
     #[test]
