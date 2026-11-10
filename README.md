@@ -7,7 +7,7 @@
 
 Reach your self-hosted git server from anywhere. At home, `gitaway` connects directly. Away from home, it opens a VPN tunnel that only gitaway itself uses: no system-wide VPN, no virtual network adapter, no root.
 
-> **Status:** early development, with no release yet. Working today: profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes.
+> **Status:** early development. `0.1.0-alpha.1` is a pre-release for testing; 0.1.0 follows after a security review. Working today: guided setup from your server's WireGuard config, profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes.
 
 ## Why
 
@@ -50,10 +50,16 @@ gitaway doesn't need OpenSSH itself: the home check uses an SSH implementation b
 
 ## Install
 
-From source, with [Rust](https://rustup.rs) 1.95 or newer:
+With [Rust](https://rustup.rs) 1.95 or newer, install the current pre-release from crates.io:
 
 ```console
-$ cargo install --git https://github.com/nikkel/gitaway
+$ cargo install gitaway --version 0.1.0-alpha.1 --locked
+```
+
+Or the latest code from GitHub:
+
+```console
+$ cargo install --git https://github.com/nikkel/gitaway --locked
 ```
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.

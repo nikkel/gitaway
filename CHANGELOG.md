@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-11-10
+
+A pre-release for testing. It isn't installed unless asked for by version, and it hasn't had the security review that comes before 0.1.0.
+
 ### Added
 
 - WireGuard preshared keys: a `PresharedKey` in a client config is used by `gitaway setup` and `gitaway key import`, and kept with the device key in the keychain (one entry, so macOS asks for permission once). `key rotate` keeps it. `profile show` says when a profile has one.
@@ -22,3 +26,6 @@ All notable changes to this project are documented here. The format is based on 
 - Man pages, generated with `cargo xtask man`, for packaged installs: `man gitaway`, `man git-away` (opened by `git away --help`) and one page per gitaway command.
 - Documentation: a README with a quick start and security model, a configuration reference and an architecture guide.
 - Project scaffolding: crate layout, CI (format, lint, test, MSRV and secret scan), contributing guide and security policy.
+
+[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.0-alpha.1...HEAD
+[0.1.0-alpha.1]: https://github.com/nikkel/gitaway/releases/tag/v0.1.0-alpha.1
