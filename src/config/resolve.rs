@@ -5,10 +5,11 @@
 //! 1. `--profile <name>`
 //! 2. the `GITAWAY_PROFILE` environment variable
 //! 3. `git config gitaway.profile` (repo, then global, then `includeIf`)
-//! 4. the one profile whose `[hosts]` handles the remote's URL
+//! 4. the one profile whose `[hosts]` handles any of the command's URLs
+//!    (a push can go to several)
 //! 5. `default_profile` in `config.toml`
 //!
-//! If several profiles handle the remote in step 4, each one's home check
+//! If several profiles handle those URLs in step 4, each one's home check
 //! runs. If exactly one passes, you're at that home and it's used. Otherwise
 //! it's an error: away from home the candidates can't be told apart, and
 //! gitaway never guesses.
@@ -33,8 +34,9 @@ pub struct Inputs<'a> {
     pub env: Option<&'a ProfileName>,
     /// From `git config gitaway.profile`.
     pub git_config: Option<&'a ProfileName>,
-    /// The remote the command talks to, if one could be worked out.
-    pub remote: Option<&'a RemoteUrl>,
+    /// Every network URL the command may contact; empty if none could be
+    /// worked out.
+    pub remotes: &'a [RemoteUrl],
     /// From `default_profile` in `config.toml`.
     pub default: Option<&'a ProfileName>,
 }
@@ -85,7 +87,7 @@ pub enum ResolveError {
     /// Several profiles handle the remote, and their home checks couldn't
     /// tell them apart.
     #[error(
-        "profiles {} all handle this remote and none is verifiably home; pick one with `gitaway use <profile>`",
+        "profiles {} all handle this command's remotes and none is verifiably home; pick one with `gitaway use <profile>`",
         .0.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
     )]
     Ambiguous(Vec<ProfileName>),
@@ -116,35 +118,33 @@ pub fn resolve<'a>(
         }
     }
 
-    if let Some(remote) = inputs.remote {
-        let candidates: Vec<_> = profiles
-            .iter()
-            .filter(|(_, profile)| profile.hosts.handles(remote))
-            .collect();
-        match candidates.as_slice() {
-            [] => {}
-            [(name, profile)] => {
-                return Ok(Some(Resolved {
+    let candidates: Vec<_> = profiles
+        .iter()
+        .filter(|(_, profile)| inputs.remotes.iter().any(|r| profile.hosts.handles(r)))
+        .collect();
+    match candidates.as_slice() {
+        [] => {}
+        [(name, profile)] => {
+            return Ok(Some(Resolved {
+                name,
+                profile,
+                source: Source::HostMatch,
+            }));
+        }
+        several => {
+            let mut home = several
+                .iter()
+                .filter(|(name, profile)| is_home(name, profile));
+            return match (home.next(), home.next()) {
+                (Some((name, profile)), None) => Ok(Some(Resolved {
                     name,
                     profile,
-                    source: Source::HostMatch,
-                }));
-            }
-            several => {
-                let mut home = several
-                    .iter()
-                    .filter(|(name, profile)| is_home(name, profile));
-                return match (home.next(), home.next()) {
-                    (Some((name, profile)), None) => Ok(Some(Resolved {
-                        name,
-                        profile,
-                        source: Source::VerifiedHome,
-                    })),
-                    _ => Err(ResolveError::Ambiguous(
-                        several.iter().map(|(name, _)| (*name).clone()).collect(),
-                    )),
-                };
-            }
+                    source: Source::VerifiedHome,
+                })),
+                _ => Err(ResolveError::Ambiguous(
+                    several.iter().map(|(name, _)| (*name).clone()).collect(),
+                )),
+            };
         }
     }
 
@@ -227,7 +227,7 @@ mod tests {
             flag: Some(&flag),
             env: Some(&env),
             git_config: Some(&git),
-            remote: None,
+            remotes: &[],
             default: Some(&default),
         };
         assert_eq!(resolved_name(all, never_home), Ok(Some("office".into())));
@@ -251,7 +251,7 @@ mod tests {
         let git = name("home");
         let inputs = Inputs {
             git_config: Some(&git),
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             ..Inputs::default()
         };
         assert_eq!(resolved_name(inputs, never_home), Ok(Some("home".into())));
@@ -262,7 +262,7 @@ mod tests {
         let remote = remote_url::parse("ssh://git@198.51.100.5/app.git").unwrap();
         let default = name("home");
         let inputs = Inputs {
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             default: Some(&default),
             ..Inputs::default()
         };
@@ -276,7 +276,7 @@ mod tests {
     fn several_matches_use_the_one_verified_home() {
         let remote = remote_url::parse("git@192.0.2.10:app.git").unwrap();
         let inputs = Inputs {
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             ..Inputs::default()
         };
         let profiles = profiles();
@@ -292,7 +292,7 @@ mod tests {
         let remote = remote_url::parse("git@192.0.2.10:app.git").unwrap();
         let default = name("office");
         let inputs = Inputs {
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             default: Some(&default),
             ..Inputs::default()
         };
@@ -301,12 +301,27 @@ mod tests {
         assert_eq!(resolved_name(inputs, |_, _| true), expected, "both home");
     }
 
+    /// A push to GitHub and to home: the home URL picks the profile, even
+    /// though it isn't first.
+    #[test]
+    fn any_of_the_commands_urls_can_match_a_profile() {
+        let remotes = [
+            remote_url::parse("git@github.com:alice/app.git").unwrap(),
+            remote_url::parse("ssh://git@198.51.100.5/app.git").unwrap(),
+        ];
+        let inputs = Inputs {
+            remotes: &remotes,
+            ..Inputs::default()
+        };
+        assert_eq!(resolved_name(inputs, never_home), Ok(Some("office".into())));
+    }
+
     #[test]
     fn unmatched_remote_falls_back_to_default() {
         let remote = remote_url::parse("git@github.com:alice/app.git").unwrap();
         let default = name("office");
         let inputs = Inputs {
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             default: Some(&default),
             ..Inputs::default()
         };
@@ -317,7 +332,7 @@ mod tests {
     fn nothing_applies_means_plain_git() {
         let remote = remote_url::parse("git@github.com:alice/app.git").unwrap();
         let inputs = Inputs {
-            remote: Some(&remote),
+            remotes: std::slice::from_ref(&remote),
             ..Inputs::default()
         };
         assert_eq!(resolved_name(inputs, never_home), Ok(None));

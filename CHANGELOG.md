@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on 
 
 - On Linux, gitaway marks itself not dumpable while it runs: no core dump can write the device key to disk, and other programs running as you can't attach a debugger or read its memory. git and ssh, which gitaway starts, are unaffected. If the system refuses, gitaway warns and carries on.
 - `gitaway setup --config` no longer repeats its value in an error when that value is a key, or a line of a config, rather than a path.
+- Away from home, a `[hosts]` entry written as an ssh alias now goes through the tunnel even when `~/.ssh/config` gives the alias a different `Hostname`. Before, ssh connected to that address directly.
+- A command that contacts several servers (a remote with several push URLs, `fetch --all`, `remote update`, submodules) now uses the tunnel if any of them is a home server. Before, only the first URL was checked, and the others could be reached directly. A command reaching two profiles' home servers is refused.
+- Your own `http.<url>.proxy` or `remote.<name>.proxy` can no longer send a home URL around the tunnel: gitaway outranks them for home URLs, for that command only. A `ProxyJump` or `ProxyCommand` in your own ssh command is refused away from home, with how to move it to `~/.ssh/config`.
 
 ### Fixed
 

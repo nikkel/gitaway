@@ -12,8 +12,15 @@
 //!  … then bytes flow both ways
 //! ```
 //!
-//! [`accept`] runs the server side; [`connect`] is the client side, used by
-//! the `__proxy-connect` helper that ssh runs.
+//! The username picks the [`Scope`] of a request. `gitaway` asks for an
+//! ordinary connection: through the tunnel for a home host, directly for
+//! anything else. `gitaway-home-only` asks for a home host only: if the
+//! target isn't one, the proxy answers "not allowed" and connects nowhere.
+//! The helper uses that to try the name ssh was given before the address it
+//! resolved it to (see [`super::helper`]).
+//!
+//! [`accept`] runs the server side; [`connect`] and [`connect_home_only`]
+//! are the client side, used by the `__proxy-connect` helper that ssh runs.
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -29,8 +36,21 @@ const ATYP_IPV4: u8 = 1;
 const ATYP_DOMAIN: u8 = 3;
 const ATYP_IPV6: u8 = 4;
 
-/// The username clients send. Only the token (the password) matters.
+/// The username for an ordinary request ([`Scope::Any`]). The token is the
+/// password.
 pub const USERNAME: &str = "gitaway";
+
+/// The username for a [`Scope::HomeOnly`] request.
+pub const HOME_ONLY_USERNAME: &str = "gitaway-home-only";
+
+/// Which connections a request allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Through the tunnel for a home host, directly for anything else.
+    Any,
+    /// Through the tunnel for a home host; for anything else, nothing.
+    HomeOnly,
+}
 
 /// Where a client asked to connect.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +59,8 @@ pub struct Target {
     pub host: String,
     /// The port.
     pub port: u16,
+    /// Which connections the client allows.
+    pub scope: Scope,
 }
 
 /// The answer to a CONNECT request.
@@ -49,6 +71,8 @@ pub enum Reply {
     Succeeded = 0,
     /// Something else went wrong.
     GeneralFailure = 1,
+    /// A [`Scope::HomeOnly`] request for a host that isn't a home host.
+    NotAllowed = 2,
     /// The target couldn't be reached.
     HostUnreachable = 4,
     /// The target refused.
@@ -124,13 +148,18 @@ where
     if stream.read_u8().await? != AUTH_VERSION {
         return Err(HandshakeError::NotSocks5);
     }
-    let _username = read_short_string(stream).await?;
+    let username = read_short_string(stream).await?;
     let password = read_short_string(stream).await?;
     if !constant_time_eq(&password, token.as_bytes()) {
         stream.write_all(&[AUTH_VERSION, 1]).await?;
         return Err(HandshakeError::WrongToken);
     }
     stream.write_all(&[AUTH_VERSION, 0]).await?;
+    let scope = if username == HOME_ONLY_USERNAME.as_bytes() {
+        Scope::HomeOnly
+    } else {
+        Scope::Any
+    };
 
     // The request.
     let mut header = [0; 4];
@@ -170,7 +199,7 @@ where
         }
     };
     let port = stream.read_u16().await?;
-    Ok(Target { host, port })
+    Ok(Target { host, port, scope })
 }
 
 /// Answers a CONNECT request. gitaway doesn't report the bound address
@@ -190,6 +219,34 @@ pub fn connect(
     host: &str,
     port: u16,
 ) -> io::Result<std::net::TcpStream> {
+    request(proxy, token, USERNAME, host, port)?
+        .map_err(|code| io::Error::other(Reply::describe(code)))
+}
+
+/// Like [`connect`], but only for a home host: `Ok(None)` if `host:port`
+/// isn't one, in which case the proxy has connected nowhere.
+pub fn connect_home_only(
+    proxy: SocketAddr,
+    token: &str,
+    host: &str,
+    port: u16,
+) -> io::Result<Option<std::net::TcpStream>> {
+    match request(proxy, token, HOME_ONLY_USERNAME, host, port)? {
+        Ok(stream) => Ok(Some(stream)),
+        Err(code) if code == Reply::NotAllowed as u8 => Ok(None),
+        Err(code) => Err(io::Error::other(Reply::describe(code))),
+    }
+}
+
+/// Runs the client side as `username`. The inner `Err` is the proxy's
+/// reply code when it didn't connect.
+fn request(
+    proxy: SocketAddr,
+    token: &str,
+    username: &str,
+    host: &str,
+    port: u16,
+) -> io::Result<Result<std::net::TcpStream, u8>> {
     let protocol = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_owned());
     let mut stream = std::net::TcpStream::connect(proxy)?;
     stream.write_all(&[VERSION, 1, METHOD_PASSWORD])?;
@@ -200,7 +257,7 @@ pub fn connect(
     }
 
     let mut auth = vec![AUTH_VERSION];
-    push_short_string(&mut auth, USERNAME.as_bytes())?;
+    push_short_string(&mut auth, username.as_bytes())?;
     push_short_string(&mut auth, token.as_bytes())?;
     stream.write_all(&auth)?;
     stream.read_exact(&mut answer)?;
@@ -232,7 +289,7 @@ pub fn connect(
         return Err(protocol("the proxy isn't a SOCKS5 server"));
     }
     if header[1] != Reply::Succeeded as u8 {
-        return Err(io::Error::other(Reply::describe(header[1])));
+        return Ok(Err(header[1]));
     }
     // Skip the bound address, which gitaway doesn't use.
     let address_len = match header[3] {
@@ -247,7 +304,7 @@ pub fn connect(
     };
     let mut rest = vec![0; address_len + 2];
     stream.read_exact(&mut rest)?;
-    Ok(stream)
+    Ok(Ok(stream))
 }
 
 async fn read_short_string<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
@@ -319,7 +376,8 @@ mod tests {
             target.unwrap(),
             Target {
                 host: "git.example.com".into(),
-                port: 22
+                port: 22,
+                scope: Scope::Any,
             }
         );
         assert_eq!(written, [5, 2, 1, 0]);
@@ -329,7 +387,8 @@ mod tests {
             server_sees(&ipv4, "secret").0.unwrap(),
             Target {
                 host: "192.0.2.10".into(),
-                port: 2222
+                port: 2222,
+                scope: Scope::Any,
             }
         );
 
@@ -343,6 +402,36 @@ mod tests {
                 .host,
             "2001:db8::10"
         );
+    }
+
+    #[test]
+    fn the_home_only_username_asks_for_a_home_host_only() {
+        let mut bytes = vec![5, 1, 2, 1, HOME_ONLY_USERNAME.len() as u8];
+        bytes.extend(HOME_ONLY_USERNAME.as_bytes());
+        bytes.extend([6]);
+        bytes.extend(b"secret");
+        bytes.extend([5, 1, 0, 3, 3, b'n', b'a', b's', 0, 22]);
+        let (target, _) = server_sees(&bytes, "secret");
+        assert_eq!(target.unwrap().scope, Scope::HomeOnly);
+    }
+
+    #[test]
+    fn a_home_only_client_hears_not_allowed_as_none() {
+        runtime().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let target = accept(&mut stream, "secret").await.unwrap();
+                reply(&mut stream, Reply::NotAllowed).await.unwrap();
+                target.scope
+            });
+            let client = tokio::task::spawn_blocking(move || {
+                connect_home_only(proxy, "secret", "nas", 22).map(|s| s.is_none())
+            });
+            assert!(client.await.unwrap().unwrap(), "expected None");
+            assert_eq!(server.await.unwrap(), Scope::HomeOnly);
+        });
     }
 
     #[test]

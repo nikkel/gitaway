@@ -676,6 +676,137 @@ mod network {
             .stderr(predicate::str::contains("has no tunnel address"));
         assert!(!env.ran("-C app fetch"));
     }
+
+    /// A profile that's always away (no `[home]`, no tunnel address), so a
+    /// command that reaches its host fails with "no tunnel address" before
+    /// git runs. A command that wrongly ran directly would run git instead.
+    fn always_away(env: &Env) {
+        env.add_profile("home", &["--host", "127.0.0.1=10.0.0.1"]);
+    }
+
+    /// A bare repository on disk: a remote git reaches without the network.
+    fn local_remote(env: &Env) -> String {
+        let dir = env.path("local.git");
+        std::fs::create_dir_all(&dir).unwrap();
+        env.git(&dir, &["init", "--quiet", "--bare"]);
+        dir.display().to_string()
+    }
+
+    #[test]
+    fn a_push_whose_second_push_url_is_home_uses_the_tunnel() {
+        let env = Env::new();
+        always_away(&env);
+        let local = local_remote(&env);
+        let app = env.repo("app", &local);
+        env.git(
+            &app,
+            &["remote", "set-url", "--add", "--push", "origin", &local],
+        );
+        env.git(
+            &app,
+            &["remote", "set-url", "--add", "--push", "origin", REMOTE],
+        );
+        env.gitaway()
+            .args(["-C", "app", "push"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("has no tunnel address"));
+        assert!(!env.ran("-C app push"), "{:?}", env.git_log());
+    }
+
+    #[test]
+    fn fetch_all_uses_the_tunnel_when_any_remote_is_home() {
+        let env = Env::new();
+        always_away(&env);
+        let local = local_remote(&env);
+        let app = env.repo("app", &local);
+        env.git(&app, &["remote", "add", "home", REMOTE]);
+        for args in [&["fetch", "--all"][..], &["remote", "update"]] {
+            let mut command = vec!["-C", "app"];
+            command.extend_from_slice(args);
+            env.gitaway()
+                .args(&command)
+                .assert()
+                .code(1)
+                .stderr(predicate::str::contains("has no tunnel address"));
+            assert!(!env.ran(&command.join(" ")), "{:?}", env.git_log());
+        }
+    }
+
+    #[test]
+    fn a_submodule_on_the_home_server_uses_the_tunnel() {
+        let env = Env::new();
+        always_away(&env);
+        let local = local_remote(&env);
+        let app = env.repo("app", &local);
+        std::fs::write(
+            app.join(".gitmodules"),
+            format!("[submodule \"lib\"]\n\tpath = lib\n\turl = {REMOTE}\n"),
+        )
+        .unwrap();
+        env.gitaway()
+            .args(["-C", "app", "submodule", "update", "--init"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("has no tunnel address"));
+        assert!(!env.ran("-C app submodule"), "{:?}", env.git_log());
+    }
+
+    /// ssh keeps the first proxy it's given, and the user's own comes before
+    /// gitaway's, so the command is refused with a way out, before any
+    /// tunnel is opened.
+    #[test]
+    fn an_ssh_command_with_its_own_jump_host_is_refused_with_guidance() {
+        let env = Env::new();
+        always_away(&env);
+        env.repo("app", REMOTE);
+        env.gitaway()
+            .args(["-C", "app", "fetch"])
+            .env("GIT_SSH_COMMAND", "ssh -J bastion.example.net")
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("ProxyJump")
+                    .and(predicate::str::contains("~/.ssh/config"))
+                    .and(predicate::str::contains("no tunnel address").not()),
+            );
+        assert!(!env.ran("-C app fetch"), "{:?}", env.git_log());
+    }
+
+    #[test]
+    fn a_command_reaching_two_profiles_home_hosts_is_refused() {
+        let env = Env::new();
+        always_away(&env);
+        env.add_profile("office", &["--host", "127.0.0.2=10.0.0.1"]);
+        let app = env.repo("app", REMOTE);
+        env.git(
+            &app,
+            &["remote", "set-url", "--add", "--push", "origin", REMOTE],
+        );
+        env.git(
+            &app,
+            &[
+                "remote",
+                "set-url",
+                "--add",
+                "--push",
+                "origin",
+                "ssh://git@127.0.0.2:1/app.git",
+            ],
+        );
+        // Pinned to `home`, so the profile isn't in doubt: the push would
+        // run with home's tunnel, and office's host would go around its own.
+        env.git(&app, &["config", "gitaway.profile", "home"]);
+        env.gitaway()
+            .args(["-C", "app", "push"])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("profile `office`")
+                    .and(predicate::str::contains("one tunnel per command")),
+            );
+        assert!(!env.ran("-C app push"), "{:?}", env.git_log());
+    }
 }
 
 mod keys {

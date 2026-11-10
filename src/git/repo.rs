@@ -57,25 +57,69 @@ impl Repo {
         }
     }
 
-    /// The URL git will connect to for a remote, after any `insteadOf`
-    /// rewrites. For [`Direction::Push`] this is the push URL, which may
-    /// differ. `None` if there's no such remote.
-    pub fn remote_url(
-        &self,
-        remote: &str,
-        direction: Direction,
-    ) -> Result<Option<String>, RunError> {
-        let mut args = vec!["remote", "get-url"];
+    /// Every URL git may connect to for a remote, after any `insteadOf`
+    /// rewrites. For [`Direction::Push`] these are the push URLs, which may
+    /// differ: git pushes to each one. Empty if there's no such remote.
+    ///
+    /// A fetch only uses the first URL, but all are listed: counting one
+    /// git won't contact only costs a tunnel it didn't need.
+    pub fn remote_urls(&self, remote: &str, direction: Direction) -> Result<Vec<String>, RunError> {
+        let mut args = vec!["remote", "get-url", "--all"];
         if direction == Direction::Push {
             args.push("--push");
         }
         args.extend(["--", remote]);
         let out = self.git.capture(&args)?;
         match out.code {
-            0 => Ok(out.stdout.lines().next().map(str::to_owned)),
+            0 => Ok(out.stdout.lines().map(str::to_owned).collect()),
             // 2: no such remote. 128: not in a repository.
-            2 | 128 => Ok(None),
+            2 | 128 => Ok(Vec::new()),
             code => Err(failed(&args, code, out.stderr)),
+        }
+    }
+
+    /// The URLs of the repository's submodules: those already set up
+    /// (`submodule.<name>.url` in its config) and those listed in its
+    /// `.gitmodules`, which `git submodule update --init` reads. Empty
+    /// outside a repository or in a bare one.
+    ///
+    /// Relative URLs (`../lib.git`) are returned as written. They're on the
+    /// superproject's own server, which its remotes already cover.
+    pub fn submodule_urls(&self) -> Result<Vec<String>, RunError> {
+        const KEYS: &str = r"^submodule\..*\.url$";
+        let mut urls = self.config_values(&["config", "--get-regexp", KEYS])?;
+        let args = ["rev-parse", "--show-toplevel"];
+        let top = self.git.capture(&args)?;
+        match top.code {
+            0 => {
+                let file = format!("{}/.gitmodules", top.stdout);
+                urls.extend(self.config_values(&[
+                    "config",
+                    "--file",
+                    &file,
+                    "--get-regexp",
+                    KEYS,
+                ])?);
+            }
+            // Not in a repository, or no working tree.
+            128 => {}
+            code => return Err(failed(&args, code, top.stderr)),
+        }
+        Ok(urls)
+    }
+
+    /// The values `git config --get-regexp` prints, one per `key value`
+    /// line. Exit code 1 means none matched (or the file doesn't exist).
+    fn config_values(&self, args: &[&str]) -> Result<Vec<String>, RunError> {
+        let out = self.git.capture(args)?;
+        match out.code {
+            0 => Ok(out
+                .stdout
+                .lines()
+                .filter_map(|line| line.split_once(' ').map(|(_, value)| value.to_owned()))
+                .collect()),
+            1 => Ok(Vec::new()),
+            code => Err(failed(args, code, out.stderr)),
         }
     }
 
@@ -211,7 +255,12 @@ mod tests {
         let repo = Repo::new(git_in(dir.path()));
         assert_eq!(repo.profile().unwrap(), None);
         assert!(repo.remote_names().unwrap().is_empty());
-        assert_eq!(repo.remote_url("origin", Direction::Fetch).unwrap(), None);
+        assert!(
+            repo.remote_urls("origin", Direction::Fetch)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(repo.submodule_urls().unwrap().is_empty());
         assert_eq!(repo.default_remote(Direction::Push).unwrap(), "origin");
     }
 
@@ -240,24 +289,67 @@ mod tests {
 
         assert_eq!(repo.remote_names().unwrap(), ["mirror", "origin"]);
         assert_eq!(
-            repo.remote_url("origin", Direction::Fetch)
-                .unwrap()
-                .as_deref(),
-            Some("ssh://git@192.0.2.10:2222/alice/app.git")
+            repo.remote_urls("origin", Direction::Fetch).unwrap(),
+            ["ssh://git@192.0.2.10:2222/alice/app.git"]
         );
         assert_eq!(
-            repo.remote_url("mirror", Direction::Fetch)
-                .unwrap()
-                .as_deref(),
-            Some("https://example.com/app.git")
+            repo.remote_urls("mirror", Direction::Fetch).unwrap(),
+            ["https://example.com/app.git"]
         );
         assert_eq!(
-            repo.remote_url("mirror", Direction::Push)
-                .unwrap()
-                .as_deref(),
-            Some("ssh://git@example.net/app.git")
+            repo.remote_urls("mirror", Direction::Push).unwrap(),
+            ["ssh://git@example.net/app.git"]
         );
-        assert_eq!(repo.remote_url("missing", Direction::Fetch).unwrap(), None);
+        assert!(
+            repo.remote_urls("missing", Direction::Fetch)
+                .unwrap()
+                .is_empty()
+        );
+
+        // git pushes to every push URL, so every one is listed.
+        run(
+            &git,
+            &[
+                "remote",
+                "set-url",
+                "--add",
+                "--push",
+                "mirror",
+                "ssh://git@192.0.2.10/app.git",
+            ],
+        );
+        assert_eq!(
+            repo.remote_urls("mirror", Direction::Push).unwrap(),
+            [
+                "ssh://git@example.net/app.git",
+                "ssh://git@192.0.2.10/app.git"
+            ]
+        );
+    }
+
+    #[test]
+    fn submodule_urls_come_from_gitmodules_and_the_config() {
+        let (dir, repo, git) = repo();
+        std::fs::write(
+            dir.path().join(".gitmodules"),
+            "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@192.0.2.10/lib.git\n",
+        )
+        .unwrap();
+        run(
+            &git,
+            &[
+                "config",
+                "submodule.docs.url",
+                "https://example.com/docs.git",
+            ],
+        );
+        assert_eq!(
+            repo.submodule_urls().unwrap(),
+            [
+                "https://example.com/docs.git",
+                "ssh://git@192.0.2.10/lib.git"
+            ]
+        );
     }
 
     #[test]
@@ -280,7 +372,11 @@ mod tests {
     #[test]
     fn remote_names_starting_with_a_dash_are_not_options() {
         let (_dir, repo, _git) = repo();
-        assert_eq!(repo.remote_url("--push", Direction::Fetch).unwrap(), None);
+        assert!(
+            repo.remote_urls("--push", Direction::Fetch)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

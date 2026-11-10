@@ -108,9 +108,9 @@ Which remotes this profile handles, and their addresses through the tunnel. Each
 - The tunnel side is where the VPN server can reach your git server. If both run on the same machine, that's the VPN server's own tunnel address (the `Address` in its WireGuard config, such as `10.0.0.1`). If the VPN server forwards traffic to your home network, the git server's home address works too (`"192.0.2.10" = "192.0.2.10"`). Your remote URLs keep using the home address either way.
 - The tunnel side must be an IP address: names can't be looked up through the tunnel.
 - Hosts are compared without regard to case. IPv6 addresses go in brackets: `"[2001:db8::10]" = "10.0.0.1"`.
-- The host must be spelled the way your remote URL spells it. A remote that uses an alias from `~/.ssh/config` (`git@nas:alice/app.git`) only matches a key written as that alias.
+- The host must be spelled the way your remote URL spells it. A remote that uses an alias from `~/.ssh/config` (`git@nas:alice/app.git`) only matches a key written as that alias. Away from home, that alias goes through the tunnel even when `~/.ssh/config` gives it a different `Hostname` or `Port`. Use a host-only key for an alias (`"nas" = "10.0.0.1"`), since ssh may connect on the port from its config.
 
-A network command runs the home check only when its remote's host is listed here. Remotes that aren't listed, such as `github.com`, go straight to git, even when this profile is the default.
+A network command runs the home check only when one of the hosts it may contact is listed here. That includes every push URL of the remote, every remote for `fetch --all` and `remote update`, and the repository's submodules. If any of them is a home host, the whole command uses the proxy, which still connects to the others directly. A command that would reach the home hosts of two different profiles is refused, because it can only use one tunnel. Remotes that aren't listed, such as `github.com`, go straight to git, even when this profile is the default.
 
 ## Which profile is used
 

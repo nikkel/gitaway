@@ -2,6 +2,8 @@
 //!
 //! ```text
 //!  git:// remote? ──────────────────────────────▶ error: use ssh:// or https://
+//!  ssh home URL, and your ssh command sets its own
+//!  ProxyCommand/ProxyJump? ──────────────────────▶ error: move it to ~/.ssh/config
 //!  take the profile's lock (wait if it's busy)
 //!  load the device key
 //!  open the tunnel ─▶ start the proxy ─▶ run git as a child, pointed at the proxy
@@ -27,17 +29,17 @@ use crate::git::repo::Repo;
 use crate::git::runner::{Git, exit_code, spawn_error};
 use crate::keys::store::{DeviceSecrets, KeyStore};
 use crate::proxy::Proxy;
-use crate::proxy::git_env::{self, SshSettings};
+use crate::proxy::git_env::{self, HomeHttp, SshSettings};
 use crate::transport::{self, Transport};
 
-use super::network::AwayPlan;
+use super::network::{AwayPlan, Contact};
 
 /// How long to wait for background tasks to stop after git has finished.
 pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 /// Runs git through the tunnel and returns git's exit code.
 pub fn run(plan: AwayPlan) -> Result<i32, Error> {
-    if plan.remote.scheme == Scheme::Git {
+    if plan.home.iter().any(|home| home.url.scheme == Scheme::Git) {
         return Err(Error::msg(format!(
             "git:// remotes can't go through the tunnel. Use the server's ssh:// or https:// \
              URL instead (`git remote set-url <remote> <url>`). Profile `{}`",
@@ -45,12 +47,23 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
         )));
     }
 
+    let repo = Repo::new(Git::new(&plan.global_options));
+    let core_ssh_command = repo.ssh_command()?;
+    let git_ssh_command = std::env::var("GIT_SSH_COMMAND").ok();
+    let git_ssh = std::env::var("GIT_SSH").ok();
+    let ssh = SshSettings {
+        git_ssh_command: git_ssh_command.as_deref(),
+        core_ssh_command: core_ssh_command.as_deref(),
+        git_ssh: git_ssh.as_deref(),
+    };
+    if let Some(home) = plan.home.iter().find(|home| home.url.scheme == Scheme::Ssh) {
+        git_env::check_ssh(ssh, &home.url.host).map_err(Error::msg)?;
+    }
+    let (http_urls, http_remotes) = home_http(&plan.home);
+
     let store = super::open_store()?;
     let name = &plan.name;
     let (_lock, secrets) = take_tunnel(&store, name)?;
-
-    let repo = Repo::new(Git::new(&plan.global_options));
-    let core_ssh_command = repo.ssh_command()?;
     let exe = std::env::current_exe()
         .map_err(|e| Error::msg(format!("couldn't find gitaway's own path: {e}")))?;
 
@@ -62,19 +75,17 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
             .await
             .map_err(|e| Error::msg(format!("couldn't start the local proxy: {e}")))?;
 
-        let git_ssh_command = std::env::var("GIT_SSH_COMMAND").ok();
-        let git_ssh = std::env::var("GIT_SSH").ok();
-        let ssh = SshSettings {
-            git_ssh_command: git_ssh_command.as_deref(),
-            core_ssh_command: core_ssh_command.as_deref(),
-            git_ssh: git_ssh.as_deref(),
-        };
         let existing_count = std::env::var("GIT_CONFIG_COUNT").ok();
+        let home_http = HomeHttp {
+            urls: &http_urls,
+            remotes: &http_remotes,
+        };
         let env = git_env::build(
             proxy.address(),
             proxy.token(),
             &exe,
             ssh,
+            home_http,
             existing_count.as_deref(),
         )
         .map_err(Error::msg)?;
@@ -91,6 +102,23 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
     // Everything spawned on the runtime (proxy, tunnel) stops here.
     runtime.shutdown_timeout(SHUTDOWN_GRACE);
     result
+}
+
+/// The home URLs reached over HTTP, and the remotes they belong to, whose
+/// proxy settings gitaway outranks for the command.
+fn home_http(home: &[Contact]) -> (Vec<&str>, Vec<&str>) {
+    let over_http: Vec<&Contact> = home
+        .iter()
+        .filter(|home| matches!(home.url.scheme, Scheme::Http | Scheme::Https))
+        .collect();
+    let urls = over_http.iter().map(|home| home.text.as_str()).collect();
+    let mut remotes: Vec<&str> = over_http
+        .iter()
+        .filter_map(|home| home.remote.as_deref())
+        .collect();
+    remotes.sort_unstable();
+    remotes.dedup();
+    (urls, remotes)
 }
 
 /// Takes the profile's lock (waiting if another command holds it, since the

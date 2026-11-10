@@ -1,5 +1,5 @@
-//! `gitaway __proxy-connect <host> <port>`: connects stdin and stdout to
-//! `host:port` through the running proxy.
+//! `gitaway __proxy-connect <host> <port> [<original name>]`: connects
+//! stdin and stdout to `host:port` through the running proxy.
 //!
 //! ssh runs it as its `ProxyCommand`, which expects a program that becomes
 //! the connection: whatever it reads from stdin goes to the server, and whatever the server
@@ -8,6 +8,19 @@
 //! ```text
 //!  ssh ──stdin──▶ helper ──▶ proxy (SOCKS5, token) ──▶ tunnel or direct ──▶ server
 //!      ◀─stdout── helper ◀──
+//! ```
+//!
+//! ssh passes the host after applying `~/.ssh/config` (`%h`: an alias's
+//! `Hostname`), and the name it was given (`%n`: the alias itself). A
+//! profile's `[hosts]` may name either, so when they differ the helper asks
+//! the proxy for the original name first, as a home host only, and falls
+//! back to `%h` only if that isn't one:
+//!
+//! ```text
+//!  ssh: git@nas, with "Host nas / Hostname 192.0.2.10 / Port 2222"
+//!   → helper 192.0.2.10 2222 nas
+//!       1. home only: nas:2222        in [hosts]? ─ yes ─▶ through the tunnel
+//!       2. otherwise: 192.0.2.10:2222  as usual (tunnel if in [hosts], else direct)
 //! ```
 //!
 //! The proxy's address and token come from the environment
@@ -24,7 +37,8 @@ use super::{PROXY_ENV, TOKEN_ENV, socks};
 /// of git commands and aliases.
 pub const COMMAND: &str = "__proxy-connect";
 
-/// Runs the helper with its arguments (host and port). Returns the exit code.
+/// Runs the helper with its arguments (host, port, and optionally the name
+/// ssh was given). Returns the exit code.
 pub fn run(args: &[String]) -> i32 {
     match connect_and_relay(args) {
         Ok(()) => 0,
@@ -36,8 +50,14 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn connect_and_relay(args: &[String]) -> Result<(), String> {
-    let [host, port] = args else {
-        return Err(format!("usage: gitaway {COMMAND} <host> <port>"));
+    let (host, port, original) = match args {
+        [host, port] => (host, port, None),
+        [host, port, original] => (host, port, Some(original)),
+        _ => {
+            return Err(format!(
+                "usage: gitaway {COMMAND} <host> <port> [<original name>]"
+            ));
+        }
     };
     let port: u16 = port
         .parse()
@@ -50,8 +70,17 @@ fn connect_and_relay(args: &[String]) -> Result<(), String> {
         })?;
     let token = std::env::var(TOKEN_ENV).map_err(|_| format!("{TOKEN_ENV} isn't set"))?;
 
-    let stream = socks::connect(proxy, &token, host, port)
-        .map_err(|e| format!("couldn't reach {host}:{port}: {e}"))?;
+    let unreachable = |name: &str, e: io::Error| format!("couldn't reach {name}:{port}: {e}");
+    let home_by_original_name = match original.filter(|name| !name.eq_ignore_ascii_case(host)) {
+        Some(name) => {
+            socks::connect_home_only(proxy, &token, name, port).map_err(|e| unreachable(name, e))?
+        }
+        None => None,
+    };
+    let stream = match home_by_original_name {
+        Some(stream) => stream,
+        None => socks::connect(proxy, &token, host, port).map_err(|e| unreachable(host, e))?,
+    };
     relay(stream).map_err(|e| format!("connection to {host}:{port}: {e}"))
 }
 

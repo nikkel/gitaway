@@ -214,6 +214,8 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 ## Limitations
 
 - Remotes using an alias from `~/.ssh/config` only match a profile's `[hosts]` entry written with the same alias.
+- Away from home, a `ProxyJump` or `ProxyCommand` inside your own ssh command (`GIT_SSH_COMMAND` or `core.sshCommand`) would route around the tunnel, so gitaway refuses it and shows how to move it to `~/.ssh/config`, where it still works.
+- One command uses one profile's tunnel, so a command that reaches the home servers of two profiles is refused. Run it once per remote.
 - Away from home, only `ssh://` and `https://` (or `http://`) remotes go through the tunnel. `git://` remotes don't: git can't hand them to gitaway's proxy, and Forgejo and Gitea don't serve `git://` anyway.
 - HTTPS-only servers can't be home-checked yet: the check needs an SSH server on the home network.
 

@@ -10,6 +10,7 @@
 //!                                                              ▼
 //!                  host:port in the profile's [hosts]? ── yes ─▶ Transport::connect(tunnel address)
 //!                                                     └── no ──▶ a direct connection, as git would make
+//!                                                                (or none, for a "home only" request)
 //! ```
 //!
 //! Because git still sees the real host name, TLS certificates, credential
@@ -41,7 +42,7 @@ use zeroize::Zeroizing;
 
 use crate::config::profile::HostMap;
 use crate::transport::{Transport, TransportError};
-use socks::{Reply, Target};
+use socks::{Reply, Scope, Target};
 
 /// The environment variable telling the helper where the proxy is.
 pub const PROXY_ENV: &str = "GITAWAY_PROXY";
@@ -180,8 +181,10 @@ async fn handle(
 }
 
 /// Connects to the target: through the tunnel if the profile handles it,
-/// otherwise directly. On failure, the SOCKS reply and, for the tunnel, a
-/// reason to show the user.
+/// otherwise directly, unless the client asked for a home host only. On
+/// failure, the SOCKS reply and, for the tunnel, a reason to show the user.
+///
+/// A home host whose tunnel connection fails is never retried directly.
 async fn open(
     routes: &Routes,
     target: &Target,
@@ -201,6 +204,9 @@ async fn open(
             };
             (reply, Some(format!("{}:{}: {e}", target.host, target.port)))
         });
+    }
+    if target.scope == Scope::HomeOnly {
+        return Err((Reply::NotAllowed, None));
     }
     let direct = TcpStream::connect((target.host.as_str(), target.port));
     match tokio::time::timeout(DIRECT_TIMEOUT, direct).await {
@@ -356,6 +362,88 @@ mod tests {
             assert!(
                 failures[0].starts_with(&format!("192.0.2.10:{port}")),
                 "{failures:?}"
+            );
+        });
+    }
+
+    /// A tunnel that never connects.
+    struct Broken;
+
+    impl Transport for Broken {
+        fn connect(&self, target: SocketAddr) -> ConnectFuture<'_> {
+            Box::pin(async move { Err(TransportError::Timeout { target }) })
+        }
+    }
+
+    /// The `[hosts]` host is reachable directly here (it's 127.0.0.1), so a
+    /// fallback to a direct connection would succeed. It must not happen:
+    /// away from home, that address may be someone else's machine.
+    #[test]
+    fn a_failed_tunnel_never_falls_back_to_a_direct_connection() {
+        runtime().block_on(async {
+            let direct = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            direct.set_nonblocking(true).unwrap();
+            let port = direct.local_addr().unwrap().port();
+            let proxy = Proxy::start(Arc::new(Broken), hosts("\"127.0.0.1\" = \"10.0.0.1\""))
+                .await
+                .unwrap();
+            let (address, token) = (proxy.address(), proxy.token().to_owned());
+            let result = tokio::task::spawn_blocking(move || {
+                socks::connect(address, &token, "127.0.0.1", port).map(|_| ())
+            })
+            .await
+            .unwrap();
+            assert!(result.is_err(), "the proxy reported success");
+            // The proxy answers only after its connection attempt, so a
+            // direct connection would already be waiting here.
+            let accepted = direct.accept();
+            assert!(
+                matches!(&accepted, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+                "the proxy connected directly: {accepted:?}"
+            );
+            assert_eq!(proxy.failures().len(), 1);
+        });
+    }
+
+    /// A home-only request for a host outside `[hosts]` connects nowhere,
+    /// even though it's reachable directly; one for a home host uses the
+    /// tunnel.
+    #[test]
+    fn home_only_requests_never_connect_directly() {
+        runtime().block_on(async {
+            let direct = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            direct.set_nonblocking(true).unwrap();
+            let port = direct.local_addr().unwrap().port();
+            let tunnel_port = greeter(b"via tunnel").await;
+            let transport = Arc::new(Loopback {
+                asked: Mutex::new(Vec::new()),
+            });
+            let proxy = Proxy::start(transport.clone(), hosts("\"nas\" = \"10.0.0.1\""))
+                .await
+                .unwrap();
+            let (address, token) = (proxy.address(), proxy.token().to_owned());
+
+            let outside = tokio::task::spawn_blocking({
+                let token = token.clone();
+                move || socks::connect_home_only(address, &token, "127.0.0.1", port)
+            });
+            assert!(outside.await.unwrap().unwrap().is_none());
+            let accepted = direct.accept();
+            assert!(
+                matches!(&accepted, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+                "the proxy connected directly: {accepted:?}"
+            );
+
+            let home = tokio::task::spawn_blocking(move || {
+                let mut stream = socks::connect_home_only(address, &token, "nas", tunnel_port)?
+                    .expect("nas is a home host");
+                let mut text = String::new();
+                stream.read_to_string(&mut text).map(|_| text)
+            });
+            assert_eq!(home.await.unwrap().unwrap(), "via tunnel");
+            assert_eq!(
+                transport.asked.lock().unwrap().as_slice(),
+                [SocketAddr::from(([10, 0, 0, 1], tunnel_port))]
             );
         });
     }

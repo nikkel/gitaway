@@ -99,6 +99,33 @@ impl<'a> Invocation<'a> {
         }
     }
 
+    /// Whether the command fetches from several remotes rather than one:
+    /// `fetch --all`, `fetch --multiple …`, the same for `pull`, and
+    /// `remote update`. Every remote's URLs then count.
+    pub fn reaches_several_remotes(&self) -> bool {
+        match self.subcommand {
+            // `remote update` is the only network `remote` subcommand.
+            Some("remote") => true,
+            Some("fetch" | "pull") => self
+                .args
+                .iter()
+                .map_while(|arg| arg.to_str().filter(|&arg| arg != "--"))
+                .any(|arg| arg == "--all" || arg == "--multiple"),
+            _ => false,
+        }
+    }
+
+    /// Whether the command may also contact the repository's submodules'
+    /// servers: `submodule update`, and fetch, pull and push, which can
+    /// recurse into submodules. `clone` and `ls-remote` don't use the
+    /// current repository's submodules.
+    pub fn reaches_submodules(&self) -> bool {
+        matches!(
+            self.subcommand,
+            Some("fetch" | "pull" | "push" | "submodule")
+        )
+    }
+
     /// The first argument that's a configured remote's name or a network URL,
     /// such as `github` in `git push --force github main`.
     ///
@@ -329,6 +356,25 @@ mod tests {
         for command in ["fetch", "pull", "clone", "ls-remote"] {
             assert_eq!(classify(&os(&[command])).direction(), Direction::Fetch);
         }
+    }
+
+    #[test]
+    fn commands_reaching_several_remotes_or_submodules_are_recognised() {
+        let several = |args: &[&str]| classify(&os(args)).reaches_several_remotes();
+        assert!(several(&["fetch", "--all"]));
+        assert!(several(&["fetch", "--multiple", "origin", "home"]));
+        assert!(several(&["pull", "--all"]));
+        assert!(several(&["remote", "update"]));
+        assert!(!several(&["fetch", "origin"]));
+        // For push, --all means every branch, not every remote.
+        assert!(!several(&["push", "--all"]));
+        assert!(!several(&["fetch", "--", "--all"]));
+
+        let submodules = |args: &[&str]| classify(&os(args)).reaches_submodules();
+        assert!(submodules(&["submodule", "update", "--init"]));
+        assert!(submodules(&["push"]));
+        assert!(!submodules(&["clone", "ssh://git@192.0.2.10/app.git"]));
+        assert!(!submodules(&["ls-remote", "origin"]));
     }
 
     #[test]

@@ -4,12 +4,18 @@
 //!
 //! ```text
 //! no profiles configured ─────────────────────────► Direct: git as typed
-//! find the remote URL ─► pick the profile (config::resolve)
-//!   no profile, unknown remote, or the profile's
-//!   [hosts] doesn't handle the remote's host ──────► Direct: git as typed
+//! find every URL the command may contact ─► pick the profile (config::resolve)
+//!   another profile's home host among them ────────► error: one tunnel per command
+//!   no profile, or the profile's [hosts]
+//!   handles none of the URLs ──────────────────────► Direct: git as typed
 //!   home check passes ─────────────────────────────► Direct (clone also pins the profile)
 //!   home check fails, or the profile has no [home] ► Away: through the tunnel (super::away)
 //! ```
+//!
+//! "Every URL" matters because one command can contact several servers: a
+//! push to every push URL of a remote, `fetch --all` to every remote,
+//! submodules to theirs. If any is a home host, the whole command goes
+//! through the proxy, which still sends the others directly.
 //!
 //! A different host key at the home address also means away: another
 //! network can have its own SSH server there. The tunnel is authenticated by
@@ -41,6 +47,18 @@ pub enum Plan {
     Away(Box<AwayPlan>),
 }
 
+/// A URL a command may contact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contact {
+    /// The URL as git will use it (after `insteadOf`).
+    pub text: String,
+    /// The same URL, parsed.
+    pub url: RemoteUrl,
+    /// The remote it belongs to; `None` for a URL typed in the arguments or
+    /// a submodule's.
+    pub remote: Option<String>,
+}
+
 /// Everything the away path needs.
 #[derive(Debug)]
 pub struct AwayPlan {
@@ -52,8 +70,8 @@ pub struct AwayPlan {
     pub name: ProfileName,
     /// The profile.
     pub profile: Profile,
-    /// The remote the command talks to.
-    pub remote: RemoteUrl,
+    /// The command's URLs that the profile's `[hosts]` handles.
+    pub home: Vec<Contact>,
 }
 
 /// Decides how to run a network command.
@@ -76,7 +94,7 @@ pub fn plan(
     let global = store.load_global()?;
 
     let repo = Repo::new(Git::new(invocation.global_options));
-    let (git_config_profile, url) = match query_repo(&repo, invocation) {
+    let (git_config_profile, urls) = match query_repo(&repo, invocation) {
         Ok(facts) => facts,
         // A lookup git itself refused (a bad `-C dir`, a broken config file)
         // fails the real command in exactly the same way, before any network
@@ -88,13 +106,23 @@ pub fn plan(
         .map(|name| name.parse::<ProfileName>())
         .transpose()
         .map_err(|e| Error::msg(format!("git config {PROFILE_KEY}: {e}")))?;
-    let remote = url.as_deref().and_then(remote_url::parse);
+    let mut contacts: Vec<Contact> = Vec::new();
+    for (remote, text) in urls {
+        let Some(url) = remote_url::parse(&text) else {
+            continue;
+        };
+        let contact = Contact { text, url, remote };
+        if !contacts.contains(&contact) {
+            contacts.push(contact);
+        }
+    }
+    let remotes: Vec<RemoteUrl> = contacts.iter().map(|c| c.url.clone()).collect();
 
     let inputs = Inputs {
         flag: profile_flag,
         env: env_profile.as_ref(),
         git_config: git_config_profile.as_ref(),
-        remote: remote.as_ref(),
+        remotes: &remotes,
         default: global.default_profile.as_ref(),
     };
     // Home checks run while resolving are kept, so none runs twice.
@@ -111,10 +139,12 @@ pub fn plan(
     let Some(resolved) = resolved else {
         return direct(as_typed);
     };
-    let Some(remote) = remote else {
-        return direct(as_typed);
-    };
-    if !resolved.profile.hosts.handles(&remote) {
+    refuse_other_profiles_hosts(resolved.name, resolved.profile, &profiles, &remotes)?;
+    let handled: Vec<Contact> = contacts
+        .into_iter()
+        .filter(|contact| resolved.profile.hosts.handles(&contact.url))
+        .collect();
+    if handled.is_empty() {
         return direct(as_typed);
     }
 
@@ -142,7 +172,7 @@ pub fn plan(
                 global_options: invocation.global_options.to_vec(),
                 name: resolved.name.clone(),
                 profile: resolved.profile.clone(),
-                remote,
+                home: handled,
             })))
         }
         // No [home]: gitaway can't tell, so it always uses the tunnel.
@@ -151,7 +181,7 @@ pub fn plan(
             global_options: invocation.global_options.to_vec(),
             name: resolved.name.clone(),
             profile: resolved.profile.clone(),
-            remote,
+            home: handled,
         }))),
     }
 }
@@ -178,31 +208,86 @@ pub(crate) fn env_profile() -> Result<Option<ProfileName>, Error> {
     }
 }
 
-/// What the repository says: `gitaway.profile`, and the URL the command
-/// will talk to.
+/// A URL and the remote it belongs to, if any.
+type RemoteAndUrl = (Option<String>, String);
+
+/// What the repository says: `gitaway.profile`, and every URL the command
+/// may contact.
 fn query_repo(
     repo: &Repo,
     invocation: &Invocation<'_>,
-) -> Result<(Option<String>, Option<String>), RunError> {
-    Ok((repo.profile()?, remote_url_of(repo, invocation)?))
+) -> Result<(Option<String>, Vec<RemoteAndUrl>), RunError> {
+    Ok((repo.profile()?, urls_of(repo, invocation)?))
 }
 
-/// The URL the command will talk to: a remote or URL named in the
-/// arguments, else git's default remote for this command. `None` for a
-/// clone of a local path.
-fn remote_url_of(repo: &Repo, invocation: &Invocation<'_>) -> Result<Option<String>, RunError> {
+/// Every URL the command may contact, as git will use them (after
+/// `insteadOf`):
+///
+/// - `fetch --all`, `remote update` and the like: every remote's URLs;
+/// - a URL in the arguments: that URL;
+/// - a remote named in the arguments, else git's default remote for this
+///   command: all of that remote's URLs (a push goes to each push URL);
+/// - plus the submodules' URLs, for commands that can recurse into them.
+///
+/// Counting a URL git won't contact only costs an unneeded tunnel; missing
+/// one would send a home host's traffic around the tunnel.
+///
+/// Each URL comes with the remote it belongs to, if any.
+fn urls_of(repo: &Repo, invocation: &Invocation<'_>) -> Result<Vec<RemoteAndUrl>, RunError> {
     let names = repo.remote_names()?;
     let direction = invocation.direction();
-    let url = match invocation.remote_argument(|arg| names.iter().any(|name| name == arg)) {
-        Some(RemoteArg::Url(url)) => Some(repo.expand_url(url)?),
-        Some(RemoteArg::Name(name)) => repo.remote_url(name, direction)?,
-        None if invocation.subcommand == Some("clone") => None,
-        None => {
-            let remote = repo.default_remote(direction)?;
-            repo.remote_url(&remote, direction)?
-        }
+    let of_remote = |name: &str| -> Result<Vec<RemoteAndUrl>, RunError> {
+        Ok(repo
+            .remote_urls(name, direction)?
+            .into_iter()
+            .map(|url| (Some(name.to_owned()), url))
+            .collect())
     };
-    Ok(url)
+    let mut urls = Vec::new();
+    if invocation.reaches_several_remotes() {
+        for name in &names {
+            urls.extend(of_remote(name)?);
+        }
+    } else {
+        match invocation.remote_argument(|arg| names.iter().any(|name| name == arg)) {
+            Some(RemoteArg::Url(url)) => urls.push((None, repo.expand_url(url)?)),
+            Some(RemoteArg::Name(name)) => urls.extend(of_remote(name)?),
+            None if invocation.subcommand == Some("clone") => {}
+            None => urls.extend(of_remote(&repo.default_remote(direction)?)?),
+        }
+    }
+    if invocation.reaches_submodules() {
+        urls.extend(repo.submodule_urls()?.into_iter().map(|url| (None, url)));
+    }
+    Ok(urls)
+}
+
+/// Refuses a command that would contact another profile's home host. It
+/// would run with `chosen`'s tunnel (or none), so that host's traffic would
+/// go around its own tunnel.
+fn refuse_other_profiles_hosts(
+    chosen_name: &ProfileName,
+    chosen: &Profile,
+    profiles: &BTreeMap<ProfileName, Profile>,
+    remotes: &[RemoteUrl],
+) -> Result<(), Error> {
+    for remote in remotes
+        .iter()
+        .filter(|remote| !chosen.hosts.handles(remote))
+    {
+        if let Some((other, _)) = profiles
+            .iter()
+            .find(|(name, profile)| *name != chosen_name && profile.hosts.handles(remote))
+        {
+            return Err(Error::msg(format!(
+                "this command also reaches {}, a home host of profile `{other}`, but it runs \
+                 with profile `{chosen_name}`. gitaway uses one tunnel per command: run it once \
+                 per remote, such as `git push <remote>`",
+                remote.host
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Runs the home check for a profile that will be used. `None` if the

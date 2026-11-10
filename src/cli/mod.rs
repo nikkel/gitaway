@@ -236,7 +236,7 @@ fn pick_profile(
         flag,
         env: env.as_ref(),
         git_config: git_config.as_ref(),
-        remote: None,
+        remotes: &[],
         default: global.default_profile.as_ref(),
     };
     match resolve(inputs, &profiles, |_, _| false)? {

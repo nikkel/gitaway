@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use gitaway::config::profile::{HostMap, Profile};
 use gitaway::proxy::Proxy;
-use gitaway::proxy::git_env::{self, SshSettings};
+use gitaway::proxy::git_env::{self, HomeHttp, SshSettings};
 use gitaway::transport::{ConnectFuture, Stream, Transport, TransportError};
 use tempfile::TempDir;
 
@@ -101,11 +101,22 @@ fn stderr(out: &Output) -> String {
 /// Runs git (blocking) with the proxy's environment, while the proxy runs
 /// on the runtime.
 async fn git_through_proxy(git: Command, proxy: &Proxy, ssh: SshSettings<'static>) -> Output {
+    git_through_proxy_with(git, proxy, ssh, HomeHttp::default()).await
+}
+
+/// The same, telling gitaway which home URLs and remotes the command uses.
+async fn git_through_proxy_with(
+    git: Command,
+    proxy: &Proxy,
+    ssh: SshSettings<'static>,
+    home: HomeHttp<'_>,
+) -> Output {
     let env = git_env::build(
         proxy.address(),
         proxy.token(),
         Path::new(env!("CARGO_BIN_EXE_gitaway")),
         ssh,
+        home,
         None,
     )
     .unwrap();
@@ -167,6 +178,106 @@ fn ssh_reaches_the_server_through_the_tunnel_despite_a_proxyjump() {
     });
 }
 
+/// A "tunnel" that always reaches 127.0.0.1 on one port, whatever the
+/// target, and records each target.
+struct FixedPort {
+    port: u16,
+    asked: Mutex<Vec<SocketAddr>>,
+}
+
+impl Transport for FixedPort {
+    fn connect(&self, target: SocketAddr) -> ConnectFuture<'_> {
+        self.asked.lock().unwrap().push(target);
+        Box::pin(async move {
+            let stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, self.port))
+                .await
+                .map_err(|source| TransportError::Connect { target, source })?;
+            Ok(Box::new(stream) as Box<dyn Stream>)
+        })
+    }
+}
+
+/// A listener that counts connections and closes each at once, standing in
+/// for whatever answers at a home address on someone else's network.
+fn decoy() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = count.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            drop(stream);
+        }
+    });
+    (port, count)
+}
+
+/// `[hosts]` names the ssh alias `nas`, whose `Hostname` and `Port` in the
+/// user's ssh config point somewhere reachable directly (the decoy). ssh
+/// hands the helper that address, but the connection must still go
+/// through the tunnel, never to the decoy.
+#[test]
+fn an_ssh_alias_in_hosts_goes_through_the_tunnel_not_to_its_hostname() {
+    let sandbox = Sandbox::new();
+    let (server_port, _) = common::ssh_server(11);
+    let (decoy_port, decoy_hits) = decoy();
+    std::fs::write(
+        sandbox.path("ssh_config"),
+        format!("Host nas\n  Hostname 127.0.0.1\n  Port {decoy_port}\n"),
+    )
+    .unwrap();
+    let ssh_command: &'static str = Box::leak(
+        format!(
+            "ssh -F '{}' -o BatchMode=yes -o StrictHostKeyChecking=no \
+             -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o IdentityFile=/dev/null",
+            sandbox.path("ssh_config").display()
+        )
+        .into_boxed_str(),
+    );
+    let hosts = Profile::from_toml(
+        r#"
+        [transport.wireguard]
+        endpoint = "vpn.example.net:51820"
+        server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        [hosts]
+        "nas" = "10.0.0.1"
+        "#,
+    )
+    .unwrap()
+    .hosts;
+    runtime().block_on(async {
+        let transport = Arc::new(FixedPort {
+            port: server_port,
+            asked: Mutex::new(Vec::new()),
+        });
+        let proxy = Proxy::start(transport.clone(), hosts).await.unwrap();
+        let mut git = sandbox.git();
+        git.arg("ls-remote").arg("git@nas:alice/app.git");
+        let ssh = SshSettings {
+            git_ssh_command: Some(ssh_command),
+            ..Default::default()
+        };
+        let out = git_through_proxy(git, &proxy, ssh).await;
+        assert_eq!(
+            decoy_hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "ssh went to the alias's Hostname directly: {}",
+            stderr(&out)
+        );
+        // Refused a login by the real server: ssh got there through the tunnel.
+        assert!(
+            stderr(&out).contains("Permission denied"),
+            "{}",
+            stderr(&out)
+        );
+        assert_eq!(
+            transport.asked.lock().unwrap().as_slice(),
+            [SocketAddr::from(([10, 0, 0, 1], decoy_port))]
+        );
+    });
+}
+
 /// A path as it can be written inside a git config value. Backslashes
 /// would be read as escapes, and git's shell on Windows takes forward
 /// slashes.
@@ -209,6 +320,60 @@ fn http_goes_through_the_tunnel_and_the_proxy_password_is_never_stored() {
             "the proxy password reached the credential helper:\n{calls}"
         );
         assert!(!calls.contains(proxy.token()), "{calls}");
+    });
+}
+
+/// The user's own git config sends the home URL to another proxy (the
+/// decoy), first for that URL, then for its remote. Either would outrank a
+/// plain `http.proxy`; gitaway's per-command settings must outrank both.
+#[test]
+fn the_users_own_proxy_for_a_home_url_is_outranked() {
+    runtime().block_on(async {
+        let port = common::empty_http_server().await;
+        let url = format!("http://192.0.2.10:{port}/app.git");
+        let (decoy_port, decoy_hits) = decoy();
+        let decoy_proxy = format!("http://127.0.0.1:{decoy_port}");
+        let settings = [
+            format!("[http \"http://192.0.2.10:{port}\"]\n\tproxy = {decoy_proxy}\n"),
+            format!("[remote \"origin\"]\n\tproxy = {decoy_proxy}\n"),
+        ];
+        for setting in settings {
+            let sandbox = Sandbox::new();
+            std::fs::write(sandbox.path("gitconfig"), &setting).unwrap();
+            let init = sandbox.git().args(["init", "--quiet"]).output().unwrap();
+            assert!(init.status.success());
+            let add = sandbox
+                .git()
+                .args(["remote", "add", "origin", &url])
+                .output()
+                .unwrap();
+            assert!(add.status.success());
+
+            let transport = Arc::new(Loopback::default());
+            let proxy = Proxy::start(transport.clone(), home_hosts()).await.unwrap();
+            let mut git = sandbox.git();
+            git.args(["ls-remote", "origin"]);
+            let home = HomeHttp {
+                urls: &[&url],
+                remotes: &["origin"],
+            };
+            let out = git_through_proxy_with(git, &proxy, SshSettings::default(), home).await;
+            assert_eq!(
+                decoy_hits.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "{setting}: git used the user's proxy: {}",
+                stderr(&out)
+            );
+            assert!(out.status.success(), "{setting}: {}", stderr(&out));
+            assert!(
+                transport
+                    .asked
+                    .lock()
+                    .unwrap()
+                    .contains(&SocketAddr::from(([10, 0, 0, 1], port))),
+                "{setting}"
+            );
+        }
     });
 }
 
