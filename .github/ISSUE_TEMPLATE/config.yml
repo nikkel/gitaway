@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help with setup
+    url: https://github.com/nikkel/gitaway/discussions
+    about: Ask in Discussions, where answers stay findable for the next person.
+  - name: Report a security vulnerability
+    url: https://github.com/nikkel/gitaway/security/advisories/new
+    about: Report it privately, never in a public issue. See SECURITY.md.
