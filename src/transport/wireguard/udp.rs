@@ -11,11 +11,15 @@
 //!  next recv_from() ──▶ Err(ConnectionReset)   (Windows only)
 //! ```
 //!
-//! For a socket that talks to whoever sends it packets, that error means
+//! An ICMP "time exceeded" (a packet that ran out of hops on the way) is
+//! reported the same way, as "network reset" (`WSAENETRESET`). std gives
+//! that one no `io::ErrorKind`, so it's recognised by its code.
+//!
+//! For a socket that talks to whoever sends it packets, these errors mean
 //! nothing: the next packet may come from somewhere else entirely. But
 //! gotatun stops receiving for good on any error, so one stray packet to a
 //! closed port (a peer that has just exited, a VPN server restarting) would
-//! leave the tunnel deaf. [`SkipResets`] drops those errors and keeps
+//! leave the tunnel deaf. [`SkipResets`] drops both errors and keeps
 //! receiving. Other systems don't report them on unconnected sockets, so it
 //! changes nothing there.
 //!
@@ -34,6 +38,18 @@ use gotatun::packet::{Packet, PacketBufPool};
 use gotatun::udp::socket::{UdpSocket, UdpSocketFactory};
 use gotatun::udp::{UdpRecv, UdpTransportFactory, UdpTransportFactoryParams};
 
+/// Windows' `WSAENETRESET`: an ICMP "time exceeded" for a packet this socket
+/// sent. std has no `ErrorKind` for it.
+const WSAENETRESET: i32 = 10052;
+
+/// Whether `error` is Windows reporting one ICMP message about a packet this
+/// socket sent, rather than a problem with the socket: "connection reset"
+/// (port unreachable) or "network reset" (time exceeded).
+fn is_icmp_report(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ConnectionReset
+        || (cfg!(windows) && error.raw_os_error() == Some(WSAENETRESET))
+}
+
 /// gotatun's ordinary UDP sockets, with [`SkipResets`] on the receive side.
 #[derive(Debug, Default)]
 pub struct UdpFactory(UdpSocketFactory);
@@ -51,7 +67,8 @@ impl UdpTransportFactory for UdpFactory {
     }
 }
 
-/// A receiving socket that ignores "connection reset" errors.
+/// A receiving socket that ignores Windows' ICMP reports: "connection reset"
+/// and "network reset".
 #[derive(Debug)]
 pub struct SkipResets<R>(R);
 
@@ -61,7 +78,7 @@ impl<R: UdpRecv> UdpRecv for SkipResets<R> {
     async fn recv_from(&mut self, pool: &mut PacketBufPool) -> io::Result<(Packet, SocketAddr)> {
         loop {
             match self.0.recv_from(pool).await {
-                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => continue,
+                Err(error) if is_icmp_report(&error) => continue,
                 other => return other,
             }
         }
@@ -78,7 +95,7 @@ impl<R: UdpRecv> UdpRecv for SkipResets<R> {
     ) -> io::Result<()> {
         loop {
             match self.0.recv_many_from(recv_buf, pool, packets).await {
-                Err(error) if error.kind() == io::ErrorKind::ConnectionReset => continue,
+                Err(error) if is_icmp_report(&error) => continue,
                 other => return other,
             }
         }
@@ -172,6 +189,24 @@ mod tests {
 
         let (result, _) = receive_many(vec![Err(io::ErrorKind::PermissionDenied.into())]);
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    /// Windows reports an ICMP "time exceeded" (a datagram that ran out of
+    /// hops) on the next receive as `WSAENETRESET`, 10052. std gives it no
+    /// `ErrorKind`, so it must be recognised by its code, on both receive
+    /// methods.
+    #[cfg(windows)]
+    #[test]
+    fn network_resets_are_skipped_too() {
+        let net_reset = || Err(io::Error::from_raw_os_error(10052));
+
+        let (result, left) = receive(vec![net_reset(), reset(), Ok(())]);
+        assert_eq!(result.unwrap(), "192.0.2.10:51820".parse().unwrap());
+        assert_eq!(left, 0);
+
+        let (result, left) = receive_many(vec![net_reset(), Ok(())]);
+        assert_eq!(result.unwrap().len(), 2);
+        assert_eq!(left, 0);
     }
 
     #[test]

@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format is based on 
 
 - On Linux, the tunnel's receive path once again splits the UDP datagrams the kernel merges (GRO), which it had stopped doing since the Windows fix in 0.1.0-alpha.1. Merged datagrams were dropped, which could stall large transfers.
 - `gitaway setup` takes a pasted config that starts with a `#` comment line, instead of reading that line as a file path.
+- On Windows, an ICMP "time exceeded" report for a packet the tunnel sent no longer stops the tunnel from receiving, as "port unreachable" reports already didn't.
 
 ## [0.1.0-alpha.1] - 2026-11-10
 
