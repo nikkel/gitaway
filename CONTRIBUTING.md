@@ -51,6 +51,19 @@ Never paste real hostnames, IPs, ports, keys, fingerprints or usernames from you
 
 Use `<type>: <short description>`, lower case and imperative, with one logical change per commit. Types: `feature`, `update`, `fix`, `docs`, `refactor`, `test`, `chore`. Add a body when the reason isn't obvious. Update [`CHANGELOG.md`](CHANGELOG.md) for changes that affect users.
 
+## Submitting changes
+
+Every change to `main` goes through a pull request, the maintainer's included, and can only merge once CI passes.
+
+1. For anything bigger than a small fix, open an issue first, so we can agree on the approach before you spend time on it.
+2. Branch from the latest `main` (in your fork, or in this repository if you have write access). Name the branch after the change, starting with its commit type: `fix/proxy-timeout`, `docs/setup-guide`.
+3. Keep the branch short-lived and focused on one change. To catch up with `main`, rebase onto it rather than merging it in.
+4. Open the pull request and fill in the template. CI starts on its own, though a first-time contributor's run may wait for the maintainer to approve it.
+5. Every CI job must pass, on Windows too. The branch must also be up to date with `main`, and review conversations resolved.
+6. The pull request is merged by rebasing its commits onto `main` when each one stands alone, or by squashing them into one commit when they don't. Either way, `main` stays a straight line of commits in the format above.
+
+Report security vulnerabilities privately, never in a pull request or issue: see [`SECURITY.md`](SECURITY.md).
+
 ## Licence
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 licence, shall be dual licensed under MIT OR Apache-2.0, without any additional terms or conditions.
