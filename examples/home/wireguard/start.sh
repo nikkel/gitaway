@@ -25,6 +25,13 @@ done
 wg set wg0 listen-port 51820 private-key /config/server.key
 ip address add 10.0.0.1/24 dev wg0
 ip link set wg0 mtu 1420 up
+
+# Devices added before a restart (add-peer.sh keeps the list).
+if [ -f /config/peers ]; then
+    while read -r key address; do
+        wg set wg0 peer "$key" allowed-ips "$address/32"
+    done </config/peers
+fi
 echo "WireGuard server up. Public key: $(cat /config/server.pub)"
 
 # The container lives as long as wireguard-go does.

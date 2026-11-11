@@ -123,8 +123,20 @@ out=$(GIT_TRACE=1 "$GITAWAY" ls-remote ssh://git@127.0.0.1:2222/alice/app.git 2>
 grep -q refs/heads/main <<<"$out" || fail "ls-remote at home listed no branches"
 ! grep -q ProxyCommand <<<"$out" || fail "at home, ssh went through the proxy"
 
+step "The server remembers its devices across a restart"
+# forgejo shares the wireguard container's network, so it stops first and
+# starts again after it.
+compose stop forgejo >/dev/null
+compose restart wireguard >/dev/null
+compose start forgejo >/dev/null
+for _ in $(seq 60); do
+    curl -fs http://127.0.0.1:3000/api/healthz >/dev/null && break
+    sleep 1
+done
+"$GITAWAY" -C ssh-clone fetch || fail "after a restart, the server no longer knew this device"
+
 step "A server that no longer knows this device is reported as such"
-compose exec -T wireguard wg set wg0 peer "$device_key" remove
+compose exec -T wireguard remove-peer.sh "$device_key" >/dev/null
 if out=$("$GITAWAY" -C ssh-clone fetch 2>&1); then
     fail "fetch worked without the server knowing this device"
 fi

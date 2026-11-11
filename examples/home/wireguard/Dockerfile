@@ -3,5 +3,5 @@
 # Docker does, without a WireGuard kernel module.
 FROM alpine:3.22
 RUN apk add --no-cache wireguard-go wireguard-tools iproute2
-COPY start.sh add-peer.sh new-device.sh /usr/local/bin/
+COPY start.sh add-peer.sh remove-peer.sh new-device.sh /usr/local/bin/
 ENTRYPOINT ["/usr/local/bin/start.sh"]

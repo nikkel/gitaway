@@ -10,7 +10,9 @@ set -eu
 
 private=$(wg genkey)
 public=$(printf '%s\n' "$private" | wg pubkey)
-wg set wg0 peer "$public" allowed-ips "$1/32"
+# add-peer.sh also remembers the device across restarts. Its message goes to
+# stderr: stdout is the config.
+add-peer.sh "$public" "$1" >&2
 echo "Added a device at $1. Its config is below; give it to the device." >&2
 
 cat <<CONFIG

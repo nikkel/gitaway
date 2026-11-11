@@ -23,6 +23,7 @@ It starts the containers, creates a user and repository, and sets gitaway up the
 
 - clones, pushes and pulls over `ssh://` and `http://` through the tunnel, with ssh checking the forge against the key gitaway pinned;
 - sets up a second profile at "home" (`127.0.0.1`), where `setup` finds Forgejo directly, and checks that commands there connect directly, without the tunnel;
+- restarts the server and checks it still knows the device;
 - removes the device from the server and checks that the error says the VPN server never answered.
 
 Everything it creates is in a temporary directory and a separate Compose project, removed at the end. Your own profiles, keychain and git config aren't touched. To test another build, set `GITAWAY=/path/to/gitaway`.
@@ -48,5 +49,7 @@ Then create a repository in Forgejo at <http://127.0.0.1:3000> (sign in as `alic
 ```console
 $ gitaway clone http://192.0.2.10:3000/alice/<repository>.git
 ```
+
+The server remembers its devices across restarts (in its `wireguard` volume), as a real one does. Remove one with `docker compose exec wireguard remove-peer.sh <public key>`.
 
 Stop and delete everything with `docker compose down --volumes`, and `rm -rf /tmp/gitaway-playground /tmp/gitaway-playground.conf`.
