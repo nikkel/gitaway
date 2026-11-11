@@ -218,6 +218,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 - One command uses one profile's tunnel, so a command that reaches the home servers of two profiles is refused. Run it once per remote.
 - Away from home, only `ssh://` and `https://` (or `http://`) remotes go through the tunnel. `git://` remotes don't: git can't hand them to gitaway's proxy, and Forgejo and Gitea don't serve `git://` anyway.
 - HTTPS-only servers can't be home-checked yet: the check needs an SSH server on the home network.
+- Only git commands that contact a remote are checked and tunnelled (`gitaway -h` lists them). Others go to git unchanged, as does anything git runs on a schedule outside gitaway, such as `git maintenance` prefetching.
 
 ## Documentation
 

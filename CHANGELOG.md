@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format is based on 
 - Away from home, a `[hosts]` entry written as an ssh alias now goes through the tunnel even when `~/.ssh/config` gives the alias a different `Hostname`. Before, ssh connected to that address directly.
 - A command that contacts several servers (a remote with several push URLs, `fetch --all`, `remote update`, submodules) now uses the tunnel if any of them is a home server. Before, only the first URL was checked, and the others could be reached directly. A command reaching two profiles' home servers is refused.
 - Your own `http.<url>.proxy` or `remote.<name>.proxy` can no longer send a home URL around the tunnel: gitaway outranks them for home URLs, for that command only. A `ProxyJump` or `ProxyCommand` in your own ssh command is refused away from home, with how to move it to `~/.ssh/config`.
+- More commands that contact a remote now go through the home check and the tunnel: `submodule add`, `remote show`, `remote prune`, `remote add -f`, `remote set-head -a` and `archive --remote`. Before, they went straight to git, so away from home they reached the home server directly.
+- A proxy given for one command (`-c`, `--config-env` or `GIT_CONFIG_PARAMETERS`) that would outrank gitaway's for a home URL is refused away from home, with an explanation.
 
 ### Fixed
 

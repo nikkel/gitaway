@@ -175,6 +175,24 @@ impl Repo {
         }
     }
 
+    /// The proxy git would use for `url`: `http.proxy` or the most specific
+    /// `http.<url>.proxy`, from every config source, as git resolves it.
+    pub fn http_proxy_for(&self, url: &str) -> Result<Option<String>, RunError> {
+        let args = ["config", "--get-urlmatch", "http.proxy", url];
+        let out = self.git.capture(&args)?;
+        match out.code {
+            0 => Ok(Some(out.stdout)),
+            1 => Ok(None),
+            code => Err(failed(&args, code, out.stderr)),
+        }
+    }
+
+    /// `remote.<name>.proxy`, which git ranks above `http.proxy` for that
+    /// remote.
+    pub fn remote_proxy(&self, remote: &str) -> Result<Option<String>, RunError> {
+        self.config_get(&format!("remote.{remote}.proxy"))
+    }
+
     /// `git config --get <key>`. Exit code 1 means the key isn't set.
     /// `core.sshCommand`, if set, including any `-c core.sshCommand=…`
     /// typed before the command.

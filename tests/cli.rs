@@ -752,6 +752,81 @@ mod network {
         assert!(!env.ran("-C app submodule"), "{:?}", env.git_log());
     }
 
+    /// Commands outside the main list that still contact a remote must go
+    /// through the away path too, or they'd reach a home host directly.
+    #[test]
+    fn other_commands_that_contact_a_home_host_use_the_tunnel() {
+        let env = Env::new();
+        always_away(&env);
+        env.repo("app", REMOTE);
+        for args in [
+            &["submodule", "add", REMOTE, "lib"][..],
+            &["remote", "show", "origin"],
+            &["remote", "prune", "origin"],
+            &["remote", "set-head", "origin", "--auto"],
+            &["remote", "add", "-f", "home", REMOTE],
+            &["archive", &format!("--remote={REMOTE}"), "HEAD"],
+        ] {
+            let mut command = vec!["-C", "app"];
+            command.extend_from_slice(args);
+            env.gitaway()
+                .args(&command)
+                .assert()
+                .code(1)
+                .stderr(predicate::str::contains("has no tunnel address"));
+            assert!(
+                !env.ran(&command.join(" ")),
+                "{args:?}: {:?}",
+                env.git_log()
+            );
+        }
+    }
+
+    /// git ranks `-c` above the settings gitaway passes in the environment,
+    /// so a proxy given that way for a home URL would take it around the
+    /// tunnel. It's refused before any tunnel opens; a `-c` proxy for some
+    /// other site isn't.
+    #[test]
+    fn a_one_off_proxy_for_a_home_url_is_refused() {
+        let env = Env::new();
+        always_away(&env);
+        let http = "http://127.0.0.1:1/alice/app.git";
+        env.repo("app", http);
+        let exact = format!("http.{http}.proxy=http://127.0.0.1:9");
+        for args in [
+            vec!["-c", exact.as_str(), "ls-remote", http],
+            vec![
+                "-C",
+                "app",
+                "-c",
+                "remote.origin.proxy=http://127.0.0.1:9",
+                "fetch",
+            ],
+        ] {
+            env.gitaway().args(&args).assert().code(1).stderr(
+                predicate::str::contains("proxy set for this command")
+                    .and(predicate::str::contains("no tunnel address").not()),
+            );
+        }
+        // gitaway's own lookups (`ls-remote --get-url`, `config …`) ran, but
+        // never the commands themselves.
+        assert!(!env.ran("ls-remote http"), "{:?}", env.git_log());
+        assert!(!env.ran("127.0.0.1:9 fetch"), "{:?}", env.git_log());
+
+        // Less specific one-off proxies lose to gitaway's per-URL setting,
+        // and one for another site doesn't apply: neither is refused.
+        for setting in [
+            "http.proxy=http://127.0.0.1:9",
+            "http.https://github.com.proxy=http://127.0.0.1:9",
+        ] {
+            env.gitaway()
+                .args(["-c", setting, "ls-remote", http])
+                .assert()
+                .code(1)
+                .stderr(predicate::str::contains("has no tunnel address"));
+        }
+    }
+
     /// ssh keeps the first proxy it's given, and the user's own comes before
     /// gitaway's, so the command is refused with a way out, before any
     /// tunnel is opened.

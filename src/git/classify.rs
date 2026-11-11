@@ -10,9 +10,10 @@
 //!
 //! # Extending
 //!
-//! - A new network command: add it to [`NETWORK_COMMANDS`], or to
+//! - A new network command: add it to [`NETWORK_COMMANDS`]; to
 //!   [`NETWORK_SUBCOMMANDS`] if only one of its subcommands talks to a remote
-//!   (like `remote update`).
+//!   (like `remote update`); or to [`NETWORK_WITH_OPTION`] if it only does
+//!   with an option (like `remote add --fetch`).
 //! - A new git global option: add it to [`GLOBAL_OPTIONS_WITH_VALUE`] if it can
 //!   take its value as the next argument (`--opt value`). Options that only
 //!   take `--opt=value`, or no value, need no change.
@@ -26,7 +27,22 @@ pub const NETWORK_COMMANDS: &[&str] = &["clone", "fetch", "pull", "push", "ls-re
 
 /// Commands where only some subcommands talk to a remote, as
 /// `(command, subcommand)` pairs.
-pub const NETWORK_SUBCOMMANDS: &[(&str, &str)] = &[("remote", "update"), ("submodule", "update")];
+pub const NETWORK_SUBCOMMANDS: &[(&str, &str)] = &[
+    ("remote", "update"),
+    ("remote", "show"),
+    ("remote", "prune"),
+    ("submodule", "update"),
+    ("submodule", "add"),
+];
+
+/// Commands that only talk to a remote when given one of some options, as
+/// `(command, subcommand, options)`. An option matches as typed, or as
+/// `--option=value`.
+pub const NETWORK_WITH_OPTION: &[(&str, Option<&str>, &[&str])] = &[
+    ("remote", Some("add"), &["-f", "--fetch"]),
+    ("remote", Some("set-head"), &["-a", "--auto"]),
+    ("archive", None, &["--remote"]),
+];
 
 /// git global options that can take their value as the next argument.
 ///
@@ -104,8 +120,7 @@ impl<'a> Invocation<'a> {
     /// `remote update`. Every remote's URLs then count.
     pub fn reaches_several_remotes(&self) -> bool {
         match self.subcommand {
-            // `remote update` is the only network `remote` subcommand.
-            Some("remote") => true,
+            Some("remote") => first_positional(self.args) == Some(OsStr::new("update")),
             Some("fetch" | "pull") => self
                 .args
                 .iter()
@@ -136,7 +151,12 @@ impl<'a> Invocation<'a> {
         self.args
             .iter()
             .map_while(|arg| arg.to_str().filter(|&arg| arg != "--"))
-            .filter(|arg| !arg.starts_with('-'))
+            // `git archive --remote=<url>` names its remote inside an option.
+            .filter_map(|arg| match arg.strip_prefix("--remote=") {
+                Some(value) => Some(value),
+                None if arg.starts_with('-') => None,
+                None => Some(arg),
+            })
             .find_map(|arg| {
                 if is_remote_name(arg) {
                     Some(RemoteArg::Name(arg))
@@ -245,12 +265,31 @@ fn is_network(command: &str, rest: &[OsString]) -> bool {
     if NETWORK_COMMANDS.contains(&command) {
         return true;
     }
-    let Some(sub) = first_positional(rest) else {
+    let sub = first_positional(rest);
+    let with_option = NETWORK_WITH_OPTION.iter().any(|&(c, s, options)| {
+        c == command
+            && s.is_none_or(|s| sub == Some(OsStr::new(s)))
+            && rest.iter().any(|arg| has_option(arg, options))
+    });
+    with_option
+        || sub.is_some_and(|sub| {
+            NETWORK_SUBCOMMANDS
+                .iter()
+                .any(|&(c, s)| c == command && OsStr::new(s) == sub)
+        })
+}
+
+/// Whether `arg` is one of `options`, as typed or as `--option=value`.
+fn has_option(arg: &OsStr, options: &[&str]) -> bool {
+    let Some(arg) = arg.to_str() else {
         return false;
     };
-    NETWORK_SUBCOMMANDS
-        .iter()
-        .any(|&(c, s)| c == command && OsStr::new(s) == sub)
+    options.iter().any(|&option| {
+        arg == option
+            || arg
+                .strip_prefix(option)
+                .is_some_and(|rest| rest.starts_with('='))
+    })
 }
 
 /// The first argument that isn't an option, as in `git remote -v update`.
@@ -356,6 +395,73 @@ mod tests {
         for command in ["fetch", "pull", "clone", "ls-remote"] {
             assert_eq!(classify(&os(&[command])).direction(), Direction::Fetch);
         }
+    }
+
+    #[test]
+    fn other_commands_that_contact_a_remote_are_network_commands() {
+        let network = |args: &[&str]| classify(&os(args)).kind == Kind::Network;
+        assert!(network(&[
+            "submodule",
+            "add",
+            "ssh://git@192.0.2.10/lib.git",
+            "lib"
+        ]));
+        assert!(network(&["remote", "show", "origin"]));
+        assert!(network(&["remote", "prune", "origin"]));
+        assert!(network(&["remote", "set-head", "origin", "--auto"]));
+        assert!(network(&["remote", "set-head", "origin", "-a"]));
+        assert!(network(&[
+            "remote",
+            "add",
+            "-f",
+            "home",
+            "ssh://git@192.0.2.10/app.git"
+        ]));
+        assert!(network(&[
+            "remote",
+            "add",
+            "--fetch",
+            "home",
+            "ssh://git@192.0.2.10/app.git"
+        ]));
+        assert!(network(&[
+            "archive",
+            "--remote=ssh://git@192.0.2.10/app.git",
+            "HEAD"
+        ]));
+        assert!(network(&[
+            "archive",
+            "--remote",
+            "ssh://git@192.0.2.10/app.git",
+            "HEAD"
+        ]));
+        // The same commands without the part that contacts a remote stay local.
+        assert!(!network(&["remote", "set-head", "origin", "main"]));
+        assert!(!network(&[
+            "remote",
+            "add",
+            "home",
+            "ssh://git@192.0.2.10/app.git"
+        ]));
+        assert!(!network(&["archive", "HEAD"]));
+        assert!(!network(&["remote", "-v"]));
+    }
+
+    #[test]
+    fn an_archive_remote_given_with_equals_is_found() {
+        let args = os(&["archive", "--remote=ssh://git@192.0.2.10/app.git", "HEAD"]);
+        assert_eq!(
+            classify(&args).remote_argument(|_| false),
+            Some(RemoteArg::Url("ssh://git@192.0.2.10/app.git"))
+        );
+    }
+
+    #[test]
+    fn only_remote_update_reaches_every_remote() {
+        let several = |args: &[&str]| classify(&os(args)).reaches_several_remotes();
+        assert!(several(&["remote", "update"]));
+        assert!(!several(&["remote", "show", "origin"]));
+        assert!(!several(&["remote", "prune", "origin"]));
     }
 
     #[test]

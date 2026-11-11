@@ -54,7 +54,9 @@ gitaway [--profile <name>] [git global options] <command> [args]
 ├─ list, tunnel ──────────────────────▶ "not available yet" (reserved)
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
-│   remote update, submodule update)                           └─ not home ─▶ git through the tunnel
+│   remote update/show/prune, remote add -f,                   └─ not home ─▶ git through the tunnel
+│   remote set-head -a, submodule update/add,
+│   archive --remote)
 └─ anything else ─────────────────────▶ git, exactly as typed
 ```
 

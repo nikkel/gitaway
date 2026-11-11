@@ -4,6 +4,8 @@
 //!  git:// remote? ──────────────────────────────▶ error: use ssh:// or https://
 //!  ssh home URL, and your ssh command sets its own
 //!  ProxyCommand/ProxyJump? ──────────────────────▶ error: move it to ~/.ssh/config
+//!  https home URL, and a one-off proxy (-c …)
+//!  would outrank gitaway's? ─────────────────────▶ error: run it without that
 //!  take the profile's lock (wait if it's busy)
 //!  load the device key
 //!  open the tunnel ─▶ start the proxy ─▶ run git as a child, pointed at the proxy
@@ -41,8 +43,8 @@ pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 pub fn run(plan: AwayPlan) -> Result<i32, Error> {
     if plan.home.iter().any(|home| home.url.scheme == Scheme::Git) {
         return Err(Error::msg(format!(
-            "git:// remotes can't go through the tunnel. Use the server's ssh:// or https:// \
-             URL instead (`git remote set-url <remote> <url>`). Profile `{}`",
+            "git:// remotes can't go through the tunnel (profile `{}`). Use the server's ssh:// \
+             or https:// URL instead: `git remote set-url <remote> <url>`",
             plan.name
         )));
     }
@@ -60,12 +62,17 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
         git_env::check_ssh(ssh, &home.url.host).map_err(Error::msg)?;
     }
     let (http_urls, http_remotes) = home_http(&plan.home);
+    let exe = std::env::current_exe()
+        .map_err(|e| Error::msg(format!("couldn't find gitaway's own path: {e}")))?;
+    let home_http = HomeHttp {
+        urls: &http_urls,
+        remotes: &http_remotes,
+    };
+    check_one_off_proxy(&plan, &exe, ssh, home_http)?;
 
     let store = super::open_store()?;
     let name = &plan.name;
     let (_lock, secrets) = take_tunnel(&store, name)?;
-    let exe = std::env::current_exe()
-        .map_err(|e| Error::msg(format!("couldn't find gitaway's own path: {e}")))?;
 
     let runtime = runtime()?;
     let result = runtime.block_on(async {
@@ -76,10 +83,6 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
             .map_err(|e| Error::msg(format!("couldn't start the local proxy: {e}")))?;
 
         let existing_count = std::env::var("GIT_CONFIG_COUNT").ok();
-        let home_http = HomeHttp {
-            urls: &http_urls,
-            remotes: &http_remotes,
-        };
         let env = git_env::build(
             proxy.address(),
             proxy.token(),
@@ -102,6 +105,64 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
     // Everything spawned on the runtime (proxy, tunnel) stops here.
     runtime.shutdown_timeout(SHUTDOWN_GRACE);
     result
+}
+
+/// Refuses a proxy that git would rank above gitaway's for a home URL: one
+/// given for this command alone (`-c`, `--config-env`, or
+/// `GIT_CONFIG_PARAMETERS`), which outranks the settings gitaway passes in
+/// git's environment. Settings in config files don't; gitaway outranks
+/// those.
+///
+/// Rather than guess from option names, it asks git which proxy it would use,
+/// with a stand-in for gitaway's: the same environment, minus the real
+/// address and token. That runs before any tunnel is opened.
+fn check_one_off_proxy(
+    plan: &AwayPlan,
+    exe: &std::path::Path,
+    ssh: SshSettings<'_>,
+    home: HomeHttp<'_>,
+) -> Result<(), Error> {
+    if home.urls.is_empty() {
+        return Ok(());
+    }
+    let stand_in = std::net::SocketAddr::from(([127, 0, 0, 1], 9));
+    let token = "stand-in";
+    let existing_count = std::env::var("GIT_CONFIG_COUNT").ok();
+    let env = git_env::build(stand_in, token, exe, ssh, home, existing_count.as_deref())
+        .map_err(Error::msg)?;
+    let git = env
+        .set
+        .iter()
+        .fold(Git::new(&plan.global_options), |git, (name, value)| {
+            git.env(name, value)
+        });
+    let repo = Repo::new(git);
+    let expected = git_env::proxy_url(stand_in, token);
+
+    let outranked = |host: &str| {
+        Error::msg(format!(
+            "a proxy set for this command alone (with -c, --config-env or \
+             GIT_CONFIG_PARAMETERS) outranks gitaway's own, so it would take {host} around \
+             gitaway's tunnel. Run the command without it. To use that proxy for other \
+             servers, put it in your git config instead (`git config --global \
+             http.<url>.proxy …`): gitaway outranks settings there for home servers"
+        ))
+    };
+    for contact in plan
+        .home
+        .iter()
+        .filter(|home| matches!(home.url.scheme, Scheme::Http | Scheme::Https))
+    {
+        if repo.http_proxy_for(&contact.text)?.as_deref() != Some(expected.as_str()) {
+            return Err(outranked(&contact.url.host));
+        }
+        if let Some(remote) = &contact.remote
+            && repo.remote_proxy(remote)?.as_deref() != Some(expected.as_str())
+        {
+            return Err(outranked(&contact.url.host));
+        }
+    }
+    Ok(())
 }
 
 /// The home URLs reached over HTTP, and the remotes they belong to, whose

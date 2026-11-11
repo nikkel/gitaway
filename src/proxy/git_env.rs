@@ -89,7 +89,7 @@ pub fn build(
         .to_str()
         .ok_or_else(|| format!("gitaway's path isn't valid UTF-8: {}", exe.display()))?;
     let helper = format!("{} {COMMAND}", shell_quote(exe));
-    let proxy_url = format!("socks5h://{USERNAME}:{token}@{proxy}");
+    let proxy_url = proxy_url(proxy, token);
 
     let mut config = vec![
         ("http.proxy".to_owned(), proxy_url.clone()),
@@ -137,6 +137,11 @@ pub fn build(
         set,
         remove: vec!["NO_PROXY", "no_proxy"],
     })
+}
+
+/// The proxy URL git is given for `http.proxy` and the per-URL settings.
+pub fn proxy_url(proxy: SocketAddr, token: &str) -> String {
+    format!("socks5h://{USERNAME}:{token}@{proxy}")
 }
 
 /// Refuses an ssh command that sets its own `ProxyCommand` or `ProxyJump`

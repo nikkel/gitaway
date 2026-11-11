@@ -75,9 +75,10 @@ gitaway's own commands:
   peer       Print what the WireGuard server needs to know about this device
   key        Replace or import this device's WireGuard key
 
-Every other command goes to git. Network commands (clone, fetch, pull, push,
-ls-remote, remote update, submodule update) first check whether you're at the
-remote's home network.
+Every other command goes to git. Network commands first check whether you're
+at the remote's home network: clone, fetch, pull, push, ls-remote, remote
+update/show/prune, remote add -f, remote set-head -a, submodule update/add and
+archive --remote.
 
 Options:
   --profile <name>   Use this profile (must come before any git options)

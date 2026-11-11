@@ -145,10 +145,12 @@ fn main_page() -> String {
          git on your PATH, unchanged, and gitaway exits with git's exit code.",
     );
     page.para(
-        "Network commands (clone, fetch, pull, push, ls-remote, remote update and \
-         submodule update) first choose a profile for the remote. If the profile \
-         handles the remote's host, gitaway checks whether you're on that \
-         profile's home network before running git.",
+        "Network commands (clone, fetch, pull, push, ls-remote, remote update, \
+         remote show, remote prune, remote add with -f, remote set-head with -a, \
+         submodule update, submodule add, and archive with --remote) first choose \
+         a profile for the servers they may contact. If the profile handles any \
+         of them, gitaway checks whether you're on that profile's home network \
+         before running git.",
     );
     page.para(
         "The same program is installed as gitaway and git-away. git runs any \
