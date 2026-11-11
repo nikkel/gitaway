@@ -1,0 +1,7 @@
+# Findings gitleaks may ignore, by fingerprint (commit:file:rule:line).
+# Each is a published test value, not a secret; current code marks such lines
+# with "gitleaks:allow", but these old commits didn't yet.
+#
+# RFC 7748 section 6.1's example private key, in a setup test before the
+# inline marker was added.
+6e5588d57bc09be6ab87a67a8bd6d6a9146cbc0f:src/cli/setup_cmd.rs:generic-api-key:596
