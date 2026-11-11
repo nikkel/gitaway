@@ -179,11 +179,9 @@ async fn report_home_check(home: &Home) {
                 AwayReason::ConnectTimeout(_) | AwayReason::Unreachable(_)
             ) {
                 println!(
-                    "  If you are home right now, {} isn't answering this device directly, though it \
-                     answered through the tunnel. A firewall or an auto-block tool (fail2ban, a \
-                     NAS's login protection) may have banned this device's address: the home check's \
-                     connections never log in, and some tools count them as failed logins. Allow \
-                     your home network in them.",
+                    "  Actually home? Then a firewall or security tool on the server (such as \
+                     fail2ban, CrowdSec or a NAS's login protection) may be blocking this device \
+                     at {}: allow your home network in it.",
                     home.ssh
                 );
             }

@@ -119,7 +119,7 @@ For a network command, gitaway uses the first of these that gives a profile:
 1. `--profile <name>`, typed before the command: `gitaway --profile home push`.
 2. The `GITAWAY_PROFILE` environment variable.
 3. `git config gitaway.profile`, checked in the repository, then your global config, then any `includeIf` files. `gitaway use <name>` sets it for a repository. A `clone` run through gitaway sets it in the new repository automatically.
-4. The one profile whose `[hosts]` lists the remote's host. If several do, gitaway runs each one's home check and uses the one that passes. If none or more than one passes, it stops and asks you to choose with `gitaway use`, because it never guesses.
+4. The one profile whose `[hosts]` lists the remote's host. If several do, gitaway runs each one's home check and uses the one that passes. If none or more than one passes, it uses your `default_profile` if that's one of them (one server set up twice, say for ssh and https). Otherwise it stops and asks you to choose, with `gitaway use` in a repository or `--profile` for one command (such as a `clone`), because it never guesses.
 5. `default_profile` in `config.toml`.
 
 If none applies, the command goes to git unchanged.

@@ -11,6 +11,8 @@
 //!
 //! If several profiles handle those URLs in step 4, each one's home check
 //! runs. If exactly one passes, you're at that home and it's used. Otherwise
+//! the default is used if it's one of them (say, one server set up twice,
+//! for ssh and for https): that's a choice you made, not a guess. Otherwise
 //! it's an error: away from home the candidates can't be told apart, and
 //! gitaway never guesses.
 //!
@@ -87,7 +89,7 @@ pub enum ResolveError {
     /// Several profiles handle the remote, and their home checks couldn't
     /// tell them apart.
     #[error(
-        "profiles {} all handle this command's remotes and none is verifiably home; pick one with `gitaway use <profile>`",
+        "profiles {} all handle this command's remotes and none is verifiably home; pick one with `gitaway use <profile>` in a repository, or `--profile <profile>` before the command",
         .0.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
     )]
     Ambiguous(Vec<ProfileName>),
@@ -135,16 +137,23 @@ pub fn resolve<'a>(
             let mut home = several
                 .iter()
                 .filter(|(name, profile)| is_home(name, profile));
-            return match (home.next(), home.next()) {
-                (Some((name, profile)), None) => Ok(Some(Resolved {
+            if let (Some((name, profile)), None) = (home.next(), home.next()) {
+                return Ok(Some(Resolved {
                     name,
                     profile,
                     source: Source::VerifiedHome,
-                })),
-                _ => Err(ResolveError::Ambiguous(
-                    several.iter().map(|(name, _)| (*name).clone()).collect(),
-                )),
-            };
+                }));
+            }
+            // The default is an explicit choice, not a guess, so it settles
+            // a tie among the profiles that handle the remote.
+            if let Some(default) = inputs.default
+                && several.iter().any(|(name, _)| *name == default)
+            {
+                return lookup(profiles, default, Source::Default, "default_profile").map(Some);
+            }
+            return Err(ResolveError::Ambiguous(
+                several.iter().map(|(name, _)| (*name).clone()).collect(),
+            ));
         }
     }
 
@@ -299,6 +308,37 @@ mod tests {
         let expected = Err(ResolveError::Ambiguous(vec![name("cabin"), name("home")]));
         assert_eq!(resolved_name(inputs, |_, _| false), expected, "none home");
         assert_eq!(resolved_name(inputs, |_, _| true), expected, "both home");
+    }
+
+    /// Two profiles for the same server (say, one set up for ssh and one for
+    /// https): if the home checks can't tell them apart, the default is used
+    /// when it's one of them. A verified home still wins over the default.
+    #[test]
+    fn several_matches_fall_back_to_the_default_when_it_is_one_of_them() {
+        let remote = remote_url::parse("git@192.0.2.10:app.git").unwrap();
+        let default = name("home");
+        let inputs = Inputs {
+            remotes: std::slice::from_ref(&remote),
+            default: Some(&default),
+            ..Inputs::default()
+        };
+        let profiles = profiles();
+        for is_home in [
+            |_: &ProfileName, _: &Profile| false,
+            |_: &ProfileName, _: &Profile| true,
+        ] {
+            let resolved = resolve(inputs, &profiles, is_home).unwrap().unwrap();
+            assert_eq!(resolved.name.as_str(), "home");
+            assert_eq!(resolved.source, Source::Default);
+        }
+        let resolved = resolve(inputs, &profiles, |name, _| name.as_str() == "cabin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resolved.name.as_str(),
+            "cabin",
+            "a verified home beats the default"
+        );
     }
 
     /// A push to GitHub and to home: the home URL picks the profile, even

@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on 
 - More commands that contact a remote now go through the home check and the tunnel: `submodule add`, `remote show`, `remote prune`, `remote add -f`, `remote set-head -a` and `archive --remote`. Before, they went straight to git, so away from home they reached the home server directly.
 - A proxy given for one command (`-c`, `--config-env` or `GIT_CONFIG_PARAMETERS`) that would outrank gitaway's for a home URL is refused away from home, with an explanation.
 
+### Changed
+
+- When several profiles handle a remote and no home check settles it, gitaway uses your default profile if it's one of them, instead of stopping. That happens when one server is set up twice, say once for ssh and once for https.
+- `gitaway check` away from home ends with a single line about firewalls and security tools, instead of a paragraph.
+
 ### Fixed
 
 - On Linux, the tunnel's receive path once again splits the UDP datagrams the kernel merges (GRO), which it had stopped doing since the Windows fix in 0.1.0-alpha.1. Merged datagrams were dropped, which could stall large transfers.

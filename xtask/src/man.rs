@@ -194,8 +194,9 @@ fn main_page() -> String {
         "the GITAWAY_PROFILE environment variable;",
         "git config gitaway.profile, which gitaway use and gitaway clone set;",
         "the only profile whose [hosts] lists the remote's host. If several do, \
-         the one whose home check passes; if that doesn't settle it, gitaway stops \
-         and asks you to run gitaway use;",
+         the one whose home check passes, else default_profile if it's one of \
+         them; if that doesn't settle it, gitaway stops and asks you to choose \
+         with gitaway use or --profile;",
         "default_profile in config.toml.",
     ]);
     page.para(
