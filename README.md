@@ -41,7 +41,7 @@ git away push
 ```
 
 - **gitaway wraps your installed git.** Commands it doesn't own (`commit`, `log`, `status` …) go to git unchanged, and you get git's exit code. Your git config, credential helpers and SSH keys work as before.
-- **Home is checked by identity, not by address.** A café network might use the same addresses as your home, but it can't produce your server's private host key. The check takes a few milliseconds at home, and gives up within about a second elsewhere.
+- **Home is checked by identity, not by address.** A café network might use the same addresses as your home, but it can't produce your server's private host key. The check takes a few tens of milliseconds at home, and gives up within about a second elsewhere.
 - **Profiles** describe each place you connect to. A repository remembers its profile, and remotes that no profile handles, such as GitHub, are left alone.
 - **Away, git's URLs aren't changed.** gitaway runs a small proxy for that one command and points git at it, so certificates, credential helpers and `known_hosts` all keep working. Only the hosts listed in the profile go through the tunnel. The tunnel runs inside gitaway and closes when git finishes; nothing else on your machine is affected.
 
