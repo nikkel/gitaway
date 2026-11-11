@@ -67,6 +67,8 @@ $ cargo install --git https://github.com/nikkel/gitaway --locked
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
 
+On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. It asks again after each update, because the permission belongs to that exact build of the program; signed release binaries (planned) will stop that.
+
 `gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) will come with packaged installs, Homebrew and release archives, which are planned. `cargo install` can't install man pages, so with it, `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
 ## Quick start
