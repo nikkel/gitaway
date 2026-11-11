@@ -57,7 +57,7 @@ pub fn run(store: &Store, args: SetupArgs) -> Result<i32, Error> {
     let keys = KeyStore::from_env(store.dir().clone())?;
     let name = prompt::with_default(
         args.name,
-        "the profile name",
+        "profile name",
         "Name for this profile",
         "home",
         |s| {

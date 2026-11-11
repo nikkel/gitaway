@@ -55,7 +55,7 @@ pub(crate) struct NewProfile {
 }
 
 fn add(store: &Store, args: AddArgs) -> Result<(), Error> {
-    let name: ProfileName = prompt::required(args.name, "the profile name", "Profile name", |s| {
+    let name: ProfileName = prompt::required(args.name, "profile name", "Profile name", |s| {
         s.parse().map_err(|e| format!("{e}"))
     })?;
     if store.profile_exists(&name) {
@@ -255,7 +255,10 @@ pub(crate) fn build_profile(new: &NewProfile) -> DocumentMut {
 fn list(store: &Store) -> Result<(), Error> {
     let profiles = store.load_profiles()?;
     if profiles.is_empty() {
-        println!("No profiles yet. Create one with `gitaway profile add`.");
+        println!(
+            "No profiles yet. Create one with `gitaway setup`, or with `gitaway profile add` \
+             if your server wants this device's public key."
+        );
         return Ok(());
     }
     let default = store.load_global()?.default_profile;

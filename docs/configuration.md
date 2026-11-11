@@ -124,7 +124,7 @@ For a network command, gitaway uses the first of these that gives a profile:
 
 If none applies, the command goes to git unchanged.
 
-The remote is the one named in the command (`git push upstream`), else the URL being cloned, else the remote git would use itself: the current branch's upstream, then `origin`.
+The remotes are every server the command may contact: the remote named in the command (`git push upstream`), else the URL being cloned, else the remote git would use itself (the current branch's upstream, then `origin`). All of that remote's URLs count, since a push goes to every push URL, as do every remote for `fetch --all` and `remote update`, and the repository's submodules. If the chosen profile handles any of them, the whole command uses it.
 
 Tip: to use one profile for every repository in a folder, put this in `~/.gitconfig`:
 

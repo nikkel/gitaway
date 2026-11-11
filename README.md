@@ -49,7 +49,7 @@ git away push
 
 - **git 2.34 or newer** on your `PATH`.
 - Linux or macOS. Windows should work but isn't tested as thoroughly.
-gitaway doesn't need OpenSSH itself: the home check uses an SSH implementation built into gitaway. Your `ssh://` remotes still need an SSH client, as they do with plain git.
+- No OpenSSH for gitaway itself: the home check uses an SSH implementation built into gitaway. Your `ssh://` remotes still need an SSH client, as they do with plain git.
 
 ## Install
 
@@ -67,7 +67,7 @@ $ cargo install --git https://github.com/nikkel/gitaway --locked
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
 
-`gitaway --help` and `git away -h` show the help. The man pages (`man gitaway`) come with packaged installs: Homebrew and the release archives, from the first release. `cargo install` can't install man pages, so with it, `git away --help` reports that there's no manual entry; use `git away -h` instead.
+`gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) will come with packaged installs, Homebrew and release archives, which are planned. `cargo install` can't install man pages, so with it, `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
 ## Quick start
 
@@ -172,7 +172,7 @@ The [configuration reference](docs/configuration.md) explains each setting.
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and with a packaged install, `man gitaway` covers the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and once packaged installs exist, `man gitaway` will cover the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
 
 ## Configuration
 
@@ -202,7 +202,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 ## Security model
 
 - **What the home check proves:** that the server you're talking to holds the private key for the pinned host key. That's the same guarantee as SSH's `known_hosts`. It doesn't log in and sends no credentials.
-- **Where the pinned key comes from matters.** If you capture it on a network an attacker controls, you could pin the attacker's key. Capture it at home, or read it from the server itself. (From the tunnel release, gitaway can capture it through the tunnel, where WireGuard has already authenticated the server.)
+- **Where the pinned key comes from matters.** If you capture it on a network an attacker controls, you could pin the attacker's key. `gitaway setup` and `gitaway check` capture it through the tunnel, where WireGuard has already authenticated the server. Captured on the home network instead (`setup` asks whether you're home first), it's only as trustworthy as that network, so run `gitaway check` from elsewhere once to confirm it.
 - **Profiles hold no secrets.** They contain public keys and addresses.
 - **Each profile has its own device key**, a WireGuard private key kept in your OS keychain: the macOS Keychain, the Windows Credential Manager, or the Secret Service (GNOME Keyring, KWallet) on Linux. On a machine without one, such as a headless server, it's kept in a file only you can read, and gitaway says so. Set `GITAWAY_KEY_STORE=file` to choose files. The key is never written to a profile, `~/.ssh`, logs, command lines or the environment, and only `gitaway key rotate` or `gitaway key import` replaces it. An imported key is read from stdin, never from the command line.
 - **On Linux, gitaway can't be inspected while it runs.** It marks itself not dumpable, so no core dump holds the device key and other programs running as you can't attach a debugger or read its memory.
