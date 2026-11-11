@@ -1,6 +1,6 @@
 [package]
 name = "gitaway"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Reach your self-hosted git server from anywhere, with a tunnel only gitaway uses"

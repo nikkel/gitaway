@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
+The first release, after security, functionality and runtime reviews. Changes since 0.1.0-alpha.1:
+
 ### Security
 
 - On Linux, gitaway marks itself not dumpable while it runs: no core dump can write the device key to disk, and other programs running as you can't attach a debugger or read its memory. git and ssh, which gitaway starts, are unaffected. If the system refuses, gitaway warns and carries on.
@@ -48,5 +52,6 @@ A pre-release for testing. It isn't installed unless asked for by version, and i
 - Documentation: a README with a quick start and security model, a configuration reference and an architecture guide.
 - Project scaffolding: crate layout, CI (format, lint, test, MSRV and secret scan), contributing guide and security policy.
 
-[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/nikkel/gitaway/compare/v0.1.0-alpha.1...v0.1.0
 [0.1.0-alpha.1]: https://github.com/nikkel/gitaway/releases/tag/v0.1.0-alpha.1

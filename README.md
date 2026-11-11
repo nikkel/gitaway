@@ -10,7 +10,7 @@
 
 Reach your self-hosted git server from anywhere. At home, `gitaway` connects directly. Away from home, it opens a VPN tunnel that only gitaway itself uses: no system-wide VPN, no virtual network adapter, no root.
 
-> **Status:** early development. `0.1.0-alpha.1` is a pre-release for testing; 0.1.0 follows after a security review. Working today: guided setup from your server's WireGuard config, profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes.
+> **Status:** early development. 0.1.0 is the first release, after security, functionality and runtime reviews. Working today: guided setup from your server's WireGuard config, profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes.
 
 ## Why
 
@@ -53,10 +53,10 @@ git away push
 
 ## Install
 
-With [Rust](https://rustup.rs) 1.95 or newer, install the current pre-release from crates.io:
+With [Rust](https://rustup.rs) 1.95 or newer, install the latest release from crates.io:
 
 ```console
-$ cargo install gitaway --version 0.1.0-alpha.1 --locked
+$ cargo install gitaway --locked
 ```
 
 Or the latest code from GitHub:
@@ -230,11 +230,11 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Verifying releases
 
-There are no releases yet. When there are, each one will be an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and binaries can't be changed or replaced, not even by the maintainer. GitHub signs an attestation of each release's contents, which you can check with the [GitHub CLI](https://cli.github.com/):
+So far, gitaway is released on crates.io, with a git tag for each version. When release binaries arrive (planned), each will be an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and binaries can't be changed or replaced, not even by the maintainer. GitHub signs an attestation of each release's contents, which you can check with the [GitHub CLI](https://cli.github.com/):
 
 ```console
-$ gh release verify v0.1.0 --repo nikkel/gitaway
-$ gh release verify-asset v0.1.0 ./gitaway-x86_64-unknown-linux-gnu.tar.xz --repo nikkel/gitaway
+$ gh release verify vX.Y.Z --repo nikkel/gitaway
+$ gh release verify-asset vX.Y.Z ./gitaway-x86_64-unknown-linux-gnu.tar.xz --repo nikkel/gitaway
 ```
 
 ## License

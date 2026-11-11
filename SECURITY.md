@@ -8,7 +8,7 @@ Include what you found, how to reproduce it and the impact you expect. You'll ge
 
 ## Supported versions
 
-gitaway has only had a pre-release (0.1.0-alpha.1), for testing. Pre-releases aren't supported: security fixes go into the next release. From 0.1.0 on, security fixes go into the latest release.
+Security fixes go into the latest release, starting with 0.1.0. Older releases, and the 0.1.0-alpha.1 pre-release, aren't updated: update to the latest.
 
 ## Scope
 
