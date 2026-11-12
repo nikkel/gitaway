@@ -122,7 +122,7 @@ impl Store {
         let text = read_optional(&path)?.unwrap_or_default();
         let new_text = apply_edit(&path, &text, edit)?;
         GlobalConfig::from_toml(&new_text).map_err(StoreError::InvalidEdit)?;
-        write_atomic(&path, &new_text)
+        write_atomic(self.dir.path(), &path, &new_text)
     }
 
     /// Loads every profile. A missing profiles directory means no profiles.
@@ -177,7 +177,7 @@ impl Store {
             return Err(StoreError::AlreadyExists(name.clone()));
         }
         Profile::from_toml(text).map_err(StoreError::InvalidEdit)?;
-        write_atomic(&self.dir.profile_file(name), text)
+        write_atomic(self.dir.path(), &self.dir.profile_file(name), text)
     }
 
     /// Edits a profile, keeping its comments and layout, and saves it only if
@@ -191,7 +191,7 @@ impl Store {
         let text = read_optional(&path)?.ok_or_else(|| StoreError::NotFound(name.clone()))?;
         let new_text = apply_edit(&path, &text, edit)?;
         Profile::from_toml(&new_text).map_err(StoreError::InvalidEdit)?;
-        write_atomic(&path, &new_text)
+        write_atomic(self.dir.path(), &path, &new_text)
     }
 
     /// Deletes a profile's file.
@@ -248,8 +248,8 @@ fn read_optional(path: &Path) -> Result<Option<String>, StoreError> {
     }
 }
 
-fn write_atomic(path: &Path, text: &str) -> Result<(), StoreError> {
-    private_fs::write_atomic(path, text.as_bytes()).map_err(|source| StoreError::Io {
+fn write_atomic(root: &Path, path: &Path, text: &str) -> Result<(), StoreError> {
+    private_fs::write_atomic(root, path, text.as_bytes()).map_err(|source| StoreError::Io {
         path: path.to_owned(),
         source,
     })
@@ -454,5 +454,23 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&store.dir().profile_file(&name("home"))), 0o600);
         assert_eq!(mode(&store.dir().profiles_dir()), 0o700);
+        assert_eq!(mode(store.dir().path()), 0o700);
+    }
+
+    // An installer can create the directory first, with the default 755.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_config_directory_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, store) = store();
+        fs::create_dir_all(store.dir().path()).unwrap();
+        fs::set_permissions(store.dir().path(), fs::Permissions::from_mode(0o755)).unwrap();
+        store.create_profile(&name("home"), PROFILE).unwrap();
+        let mode = fs::metadata(store.dir().path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
     }
 }
