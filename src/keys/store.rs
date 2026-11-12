@@ -252,7 +252,7 @@ impl KeyStore {
             Backend::File => {
                 let path = self.dir.key_file(name);
                 let contents = Zeroizing::new(format!("{}\n", text.as_str()));
-                private_fs::write_atomic(&path, contents.as_bytes())
+                private_fs::write_atomic(self.dir.path(), &path, contents.as_bytes())
                     .map_err(|source| KeyError::Io { path, source })?;
             }
         }
@@ -435,6 +435,22 @@ mod tests {
         ));
     }
 
+    // An installer can create the directory first, with the default 755.
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_key_file_makes_an_existing_config_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, store) = file_store();
+        let root = store.dir.path().to_owned();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        store
+            .save(&name("home"), &DeviceSecrets::new(DeviceKey::generate()))
+            .unwrap();
+        let mode = std::fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
     const PRESHARED: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
 
     #[test]
@@ -443,7 +459,12 @@ mod tests {
         let home = name("home");
         let key = DeviceKey::generate();
         let text = format!("{}\n", key.to_base64().as_str());
-        private_fs::write_atomic(&store.dir.key_file(&home), text.as_bytes()).unwrap();
+        private_fs::write_atomic(
+            store.dir.path(),
+            &store.dir.key_file(&home),
+            text.as_bytes(),
+        )
+        .unwrap();
         let loaded = store.load(&home).unwrap().unwrap();
         assert_eq!(loaded.key.public_key(), key.public_key());
         assert!(loaded.preshared_key.is_none());
@@ -474,7 +495,7 @@ mod tests {
         let (_temp, store) = file_store();
         let home = name("home");
         let path = store.dir.key_file(&home);
-        private_fs::write_atomic(&path, b"secret-looking-junk").unwrap();
+        private_fs::write_atomic(store.dir.path(), &path, b"secret-looking-junk").unwrap();
         let message = store.load(&home).unwrap_err().to_string();
         assert!(message.contains("damaged"), "{message}");
         assert!(!message.contains("secret-looking-junk"), "{message}");
