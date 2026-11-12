@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.1.1-rc.1] - 2026-11-12
+
+A release candidate for 0.1.1, to test the prebuilt binaries and their installers before the real release. It isn't published to crates.io, so `cargo install` never picks it up. Changes since 0.1.0:
+
 ### Added
 
 - Prebuilt binaries for Linux (x86_64 and arm64, static), macOS (Intel and Apple Silicon) and Windows (x86_64), with install scripts for Linux, macOS and Windows. Each release file has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. See the README for how to install and verify them. They aren't signed by Apple yet.
@@ -60,6 +64,7 @@ A pre-release for testing. It isn't installed unless asked for by version, and i
 - Documentation: a README with a quick start and security model, a configuration reference and an architecture guide.
 - Project scaffolding: crate layout, CI (format, lint, test, MSRV and secret scan), contributing guide and security policy.
 
-[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.1-rc.1...HEAD
+[0.1.1-rc.1]: https://github.com/nikkel/gitaway/compare/v0.1.0...v0.1.1-rc.1
 [0.1.0]: https://github.com/nikkel/gitaway/compare/v0.1.0-alpha.1...v0.1.0
 [0.1.0-alpha.1]: https://github.com/nikkel/gitaway/releases/tag/v0.1.0-alpha.1
