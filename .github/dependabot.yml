@@ -19,6 +19,9 @@ updates:
       - dependency-name: dtolnay/rust-toolchain
       # Used only by release.yml, which dist generates and pins to commits in
       # dist-workspace.toml. Edit them there, then run `dist generate`.
+      # (actions/checkout is also in release.yml. When Dependabot bumps it,
+      # its PR fails the release workflow's `plan` job until dist-workspace.toml
+      # gets the same commit and `dist generate` is run: add that to the PR.)
       - dependency-name: actions/attest
       - dependency-name: actions/upload-artifact
       - dependency-name: actions/download-artifact
