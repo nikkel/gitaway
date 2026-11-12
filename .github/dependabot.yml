@@ -17,6 +17,11 @@ updates:
       # Its "versions" are toolchains: @1.95 pins the minimum supported Rust
       # (the msrv job) and @stable follows the latest, so never bump it.
       - dependency-name: dtolnay/rust-toolchain
+      # Used only by release.yml, which dist generates and pins to commits in
+      # dist-workspace.toml. Edit them there, then run `dist generate`.
+      - dependency-name: actions/attest
+      - dependency-name: actions/upload-artifact
+      - dependency-name: actions/download-artifact
     groups:
       actions:
         patterns: ["*"]
