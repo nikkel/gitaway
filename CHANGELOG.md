@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- Prebuilt binaries for Linux (x86_64 and arm64, static), macOS (Intel and Apple Silicon) and Windows (x86_64), with install scripts for Linux, macOS and Windows. Each release file has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. See the README for how to install and verify them. They aren't signed by Apple yet.
+
 ### Security
 
 - gitaway's configuration directory is made private (mode 700) when gitaway writes to it, even if something else created it first. Before, a directory created by another program, such as an installer, kept its permissions, so other users on the machine could see which files it held, though not read them.
