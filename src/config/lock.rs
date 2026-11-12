@@ -47,7 +47,7 @@ impl ProfileLock {
             source,
         };
         if let Some(parent) = path.parent() {
-            create_private_dir(parent).map_err(err)?;
+            create_private_dir(dir.path(), parent).map_err(err)?;
         }
         let mut options = File::options();
         options.create(true).truncate(false).write(true);

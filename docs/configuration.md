@@ -16,7 +16,7 @@ All values on this page are documentation examples. Use your own.
     └── home.key
 ```
 
-The same location is used on Linux, macOS and Windows. On Linux and macOS, gitaway writes files with mode 600 in directories with mode 700. It replaces a file in one step, so an interrupted write never leaves half a file.
+The same location is used on Linux, macOS and Windows. On Linux and macOS, gitaway writes files with mode 600 in directories with mode 700, and makes the `gitaway` directory 700 if something else created it with looser permissions. It replaces a file in one step, so an interrupted write never leaves half a file.
 
 ## config.toml
 

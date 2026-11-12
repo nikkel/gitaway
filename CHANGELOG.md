@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Security
+
+- gitaway's configuration directory is made private (mode 700) when gitaway writes to it, even if something else created it first. Before, a directory created by another program, such as an installer, kept its permissions, so other users on the machine could see which files it held, though not read them.
+
 ## [0.1.0] - 2026-11-11
 
 The first release, after security, functionality and runtime reviews. Changes since 0.1.0-alpha.1:
