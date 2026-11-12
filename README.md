@@ -53,6 +53,33 @@ git away push
 
 ## Install
 
+### Prebuilt binaries (from 0.1.1)
+
+Linux (x86_64 and arm64, static, so any distribution), macOS (Intel and Apple Silicon) and Windows (x86_64). On Linux and macOS:
+
+```console
+$ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nikkel/gitaway/releases/latest/download/gitaway-installer.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```console
+> powershell -ExecutionPolicy Bypass -c "irm https://github.com/nikkel/gitaway/releases/latest/download/gitaway-installer.ps1 | iex"
+```
+
+Both put `gitaway` and `git-away` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and add that folder to your `PATH` if needed. The shell installer checks each download against a SHA-256 checksum built into the script. The PowerShell one doesn't, so on Windows prefer downloading the archive from the [releases page](https://github.com/nikkel/gitaway/releases) and verifying it as below. You can also unpack an archive yourself: it holds the program, the man pages (`dist-man/`), the licences and this README. Archives for Linux and macOS hold only `gitaway`; make `git-away` a link to it (`ln -s gitaway git-away`) so `git away push` works.
+
+**Check a download.** Every release file is signed by the release workflow, with GitHub's artifact attestations. This proves the file was built from this repository's code for that release, not just that it matches a checksum:
+
+```console
+$ gh attestation verify gitaway-x86_64-unknown-linux-musl.tar.xz \
+    --repo nikkel/gitaway --source-ref refs/tags/v0.1.1
+```
+
+Replace the file name and the version. Keep `--source-ref`: without it, the check also accepts files built from an unreleased branch.
+
+### From source
+
 With [Rust](https://rustup.rs) 1.95 or newer, install the latest release from crates.io:
 
 ```console
@@ -67,9 +94,9 @@ $ cargo install --git https://github.com/nikkel/gitaway --locked
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
 
-On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. It asks again after each update, because the permission belongs to that exact build of the program; signed release binaries (planned) will stop that.
+On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. It asks again after each update, because the permission belongs to that exact build of the program; a release binary signed by Apple (planned) will stop that.
 
-`gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) will come with packaged installs, Homebrew and release archives, which are planned. `cargo install` can't install man pages, so with it, `git away --help` reports that there's no manual entry; use `git away -h` instead.
+`gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) are in the release archives (`dist-man/`; copy them into a `man1` folder on your `MANPATH`) and will come with Homebrew. The installer scripts and `cargo install` don't install them, so `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
 ## Quick start
 
@@ -230,12 +257,15 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Verifying releases
 
-So far, gitaway is released on crates.io, with a git tag for each version. When release binaries arrive (planned), each will be an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and binaries can't be changed or replaced, not even by the maintainer. GitHub signs an attestation of each release's contents, which you can check with the [GitHub CLI](https://cli.github.com/):
+Each release is an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and files can't be changed or replaced, not even by the maintainer. GitHub signs a record of each release, and the release workflow signs every file with an artifact attestation. Check them with the [GitHub CLI](https://cli.github.com/):
 
 ```console
 $ gh release verify vX.Y.Z --repo nikkel/gitaway
-$ gh release verify-asset vX.Y.Z ./gitaway-x86_64-unknown-linux-gnu.tar.xz --repo nikkel/gitaway
+$ gh release verify-asset vX.Y.Z ./gitaway-x86_64-unknown-linux-musl.tar.xz --repo nikkel/gitaway
+$ gh attestation verify ./gitaway-x86_64-unknown-linux-musl.tar.xz --repo nikkel/gitaway --source-ref refs/tags/vX.Y.Z
 ```
+
+The first two check that GitHub holds an unaltered release and that your file is part of it. The third checks that the workflow run that built the file was triggered by that version's tag. Releases before 0.1.1 are on crates.io only, with a git tag.
 
 ## License
 

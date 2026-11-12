@@ -40,7 +40,7 @@ src/bin/git-away.rs   ──┘
 
 Cargo treats `src/main.rs` as the binary named after the package, and every file in `src/bin/` as another binary named after the file. Both are built from the same library, so they can never behave differently.
 
-Each binary contains a full copy of the code, a few megabytes each. That's deliberate: `cargo install` can only copy binaries, not create links, so two binaries is the only way it can install both names on every platform. Release archives for Linux and macOS will instead ship one binary plus a `git-away` symlink; the program doesn't care which name started it.
+Each binary contains a full copy of the code, a few megabytes each. That's deliberate: `cargo install` can only copy binaries, not create links, so two binaries is the only way it can install both names on every platform. Release archives for Linux and macOS hold one binary, and the installer scripts add a `git-away` symlink (on Windows, a hard link); the program doesn't care which name started it.
 
 ## What happens to a command
 
@@ -154,7 +154,7 @@ Each module starts with a `//!` comment that explains its purpose, how it fits i
 - `git-away.1` is the same page under the name git opens for `git away --help`.
 - Every gitaway command (`gitaway-profile-add.1`, …) gets a page generated from its clap definition, so its flags and help text can't drift from the code.
 
-**Man pages are installed by packages, not by `cargo install`.** `man` only reads files from man directories; it can't ask a program for its page. `cargo install` can only copy binaries, so the release archives and the Homebrew formula generate the pages at build time and install them. The pages aren't committed, so there's no copy to keep in sync. CI generates them on every push, so a broken page is caught early. Users of `cargo install` use `--help` instead.
+**Man pages are installed by packages, not by `cargo install`.** `man` only reads files from man directories; it can't ask a program for its page. `cargo install` can only copy binaries, so the release workflow generates the pages at build time (`cargo xtask man --out dist-man`, run by `.github/workflows/release-build-setup.yml`) and puts them in every archive. The installer scripts don't place them; a Homebrew formula will. The pages aren't committed, so there's no copy to keep in sync. CI generates them on every push, so a broken page is caught early. Users of `cargo install` use `--help` instead.
 
 ## Supported git versions
 
