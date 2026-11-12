@@ -52,3 +52,8 @@ all = { level = "warn", priority = -1 }
 
 [target."cfg(unix)".dependencies]
 rustix = { version = "1.1", features = ["process", "event"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

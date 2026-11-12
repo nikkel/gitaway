@@ -1,0 +1,5 @@
+# Steps that run before `dist build` in the release workflow. dist copies the
+# man pages into every archive (see `include` in dist-workspace.toml).
+- name: Generate man pages
+  shell: bash
+  run: cargo xtask man --out dist-man
