@@ -10,6 +10,10 @@ mkdir -p /config
 wg pubkey < /config/server.key > /config/server.pub
 chmod 644 /config/server.pub
 
+# A restart keeps the container's files, including the last run's control
+# socket. Left in place, it passes the readiness check below before
+# wireguard-go has replaced it, and `wg` then fails on the dead socket.
+rm -f /var/run/wireguard/wg0.sock
 WG_PROCESS_FOREGROUND=1 wireguard-go wg0 &
 daemon=$!
 # wireguard-go creates the interface before its control socket. `wg` only
