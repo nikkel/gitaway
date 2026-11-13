@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format is based on 
 
 - A Homebrew tap: `brew install nikkel/tap/gitaway` installs the prebuilt binary, the `git-away` command and the man pages on macOS and Linux. It follows each new release within a day.
 
+### Changed
+
+- `list` is no longer reserved: the planned command that listed your repositories through the git server's API is dropped, since it needed an API token on every device. `gitaway list` now goes to git, so a git alias named `list` works. The planned `gitaway tunnel` will let you use the git server's own web interface instead.
+
 ## [0.1.1] - 2026-11-13
 
 The first release with prebuilt binaries. Changes since 0.1.0:

@@ -210,13 +210,21 @@ mod passthrough {
     #[test]
     fn reserved_commands_are_errors() {
         let env = Env::new();
-        for command in ["list", "tunnel"] {
-            env.gitaway()
-                .arg(command)
-                .assert()
-                .code(1)
-                .stderr(predicate::str::contains("isn't available yet"));
-        }
+        env.gitaway()
+            .arg("tunnel")
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("isn't available yet"));
+    }
+
+    #[test]
+    fn list_is_no_longer_reserved_so_a_git_alias_works() {
+        let env = Env::new();
+        env.gitaway()
+            .args(["-c", "alias.list=version", "list"])
+            .assert()
+            .success()
+            .stdout(predicate::str::starts_with("git version"));
     }
 
     #[test]

@@ -209,7 +209,7 @@ The [configuration reference](docs/configuration.md) explains each setting.
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest. Planned: `tunnel`, which keeps the tunnel open so you can use your git server's web interface from anywhere.
 
 ## Configuration
 

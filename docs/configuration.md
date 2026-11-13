@@ -89,7 +89,7 @@ $ ssh-keyscan -p 2222 -t ed25519 192.0.2.10
 
 Copy only the key line, without the host name at its start: `ssh-ed25519 AAAA…`. Newer versions of `ssh-keyscan` print the `#` comment line first. Leave it out.
 
-On a LAN, `ssh-keyscan` trusts whatever answers. Reading the key from the server's own file, `/etc/ssh/ssh_host_ed25519_key.pub`, or from your forge's admin settings avoids that, as `gitaway check` does.
+On a LAN, `ssh-keyscan` trusts whatever answers. Reading the key from the server's own file, `/etc/ssh/ssh_host_ed25519_key.pub`, or from your git server's admin settings avoids that, as `gitaway check` does.
 
 How the check works is described in the [architecture guide](architecture.md#the-home-check).
 
