@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- A Homebrew tap: `brew install nikkel/tap/gitaway` installs the prebuilt binary, the `git-away` command and the man pages on macOS and Linux. It follows each new release within a day.
+
 ## [0.1.1] - 2026-11-13
 
 The first release with prebuilt binaries. Changes since 0.1.0:
