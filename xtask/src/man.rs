@@ -162,10 +162,19 @@ fn main_page() -> String {
     for (name, summary) in COMMANDS {
         page.item(name, summary);
     }
-    page.item(
-        "list, tunnel",
-        "Reserved for later releases. They report that they aren't available yet.",
-    );
+    // Read from the code, so the page can't drift from what gitaway refuses.
+    let reserved = gitaway::cli::RESERVED_COMMANDS;
+    match reserved.len() {
+        0 => {}
+        1 => page.item(
+            reserved[0],
+            "Reserved for a later release. It reports that it isn't available yet.",
+        ),
+        _ => page.item(
+            &reserved.join(", "),
+            "Reserved for later releases. They report that they aren't available yet.",
+        ),
+    }
     page.item("anything else", "Passed to git unchanged.");
 
     page.section("OPTIONS");
@@ -373,5 +382,17 @@ mod tests {
             assert!(pages.contains_key(name), "{name} missing");
         }
         assert_eq!(pages["gitaway.1"], pages["git-away.1"]);
+    }
+
+    #[test]
+    fn the_main_page_names_exactly_the_reserved_commands() {
+        let page = &render_all().unwrap()["gitaway.1"];
+        for name in gitaway::cli::RESERVED_COMMANDS {
+            assert!(page.contains(name), "`{name}` missing from gitaway.1");
+        }
+        assert!(
+            !page.contains("list, tunnel"),
+            "gitaway.1 still lists `list` as reserved"
+        );
     }
 }
