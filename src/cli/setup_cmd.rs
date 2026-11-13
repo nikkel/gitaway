@@ -273,8 +273,15 @@ async fn search_tunnel(
         transport: config.transport.clone(),
         home: None,
         hosts: HostMap::default(),
+        web: None,
     };
-    let transport = tunnel::open(name.as_str(), &profile, secrets).await?;
+    let transport = tunnel::open(
+        name.as_str(),
+        &profile,
+        secrets,
+        tunnel::Lifetime::OneCommand,
+    )
+    .await?;
     let port = ssh.and_then(|ssh| ssh.port).unwrap_or(url.effective_port());
 
     let mut tried = Vec::new();

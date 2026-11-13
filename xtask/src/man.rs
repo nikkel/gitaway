@@ -49,6 +49,11 @@ const COMMANDS: &[(&str, &str)] = &[
         "Replace this device's WireGuard key with key rotate, or use an existing one with key \
          import. See gitaway-key-rotate(1) and gitaway-key-import(1).",
     ),
+    (
+        "tunnel",
+        "Open your git server's web interface on this computer, through the tunnel, until \
+         Ctrl+C. See gitaway-tunnel(1).",
+    ),
 ];
 
 /// Writes every page into `dir`, creating it if needed. Existing files
@@ -378,6 +383,7 @@ mod tests {
             "gitaway-key-import.1",
             "gitaway-check.1",
             "gitaway-setup.1",
+            "gitaway-tunnel.1",
         ] {
             assert!(pages.contains_key(name), "{name} missing");
         }

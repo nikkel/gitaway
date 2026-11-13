@@ -50,8 +50,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 ├─ nothing, -h, --help ───────────────▶ gitaway's short help
 ├─ --version ─────────────────────────▶ gitaway's version
 ├─ setup, profile, use, peer, key, ───▶ gitaway's own commands
-│  check
-├─ tunnel ────────────────────────────▶ "not available yet" (reserved)
+│  check, tunnel
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
 │   remote update/show/prune, remote add -f,                   └─ not home ─▶ git through the tunnel
@@ -60,7 +59,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 └─ anything else ─────────────────────▶ git, exactly as typed
 ```
 
-- gitaway's own commands take precedence over git aliases with the same name. The reserved name is claimed now, so an alias can't silently change meaning when that command arrives.
+- gitaway's own commands take precedence over git aliases with the same name. A name planned for a later release can be claimed early in `RESERVED_COMMANDS` (`src/cli/mod.rs`), so an alias can't silently change meaning when that command arrives; none is reserved now.
 - Classifying a command skips git's global options (`-C dir`, `-c key=value`, `--git-dir=…`) to find the subcommand. clap only ever sees gitaway's own commands, because it would reject git's options.
 - For a network command, gitaway asks git which remote URL the command will use (`git remote get-url`, `git ls-remote --get-url`), then picks a profile using the order in the [configuration reference](configuration.md#which-profile-is-used).
 - If the profile's `[hosts]` doesn't list the remote's host, git runs without a home check.
@@ -124,6 +123,20 @@ git's URLs are never rewritten. For one network command, gitaway starts a SOCKS5
 - `git://` isn't covered: git runs `core.gitProxy` as a bare program, with no way to pass the helper's arguments.
 
 The code is in `src/proxy/`: `socks.rs` (the protocol), `mod.rs` (the server and routing), `helper.rs` (`__proxy-connect`) and `git_env.rs` (git's environment).
+
+## Keeping the tunnel open: `gitaway tunnel`
+
+`src/cli/tunnel_cmd.rs` serves the profile's `[web] url` on `localhost` through the tunnel, until Ctrl+C:
+
+```text
+browser ──▶ 127.0.0.1:<port> / [::1]:<port> ──▶ Transport::connect(web address through [hosts]) ──▶ git server
+```
+
+- It runs the home check first; at home it just prints the web address.
+- It listens before taking the profile's lock or reading the device key, so a busy port is reported at once. It never picks another port by itself.
+- The tunnel is opened as `Lifetime::LongRunning`, which turns on WireGuard keepalives, so a router doesn't forget a quiet tunnel. One connection is made before it says it's up, so a tunnel that can't work says why at once.
+- It holds the profile's lock until it stops, so other gitaway commands for that profile wait.
+- Each browser connection becomes its own connection through the tunnel, with bytes copied both ways. Nothing is inspected or changed, which is why `https://` works (with a certificate warning) and why the server still sees its own home address as its name.
 
 ## Code map
 

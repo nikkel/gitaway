@@ -103,7 +103,13 @@ async fn capture_through_tunnel(
     target: SocketAddr,
     secrets: DeviceSecrets,
 ) -> Result<HostKey, Error> {
-    let transport = transport::open(name.as_str(), profile, secrets).await?;
+    let transport = transport::open(
+        name.as_str(),
+        profile,
+        secrets,
+        transport::Lifetime::OneCommand,
+    )
+    .await?;
     let stream = transport.connect(target).await?;
     println!(
         "Tunnel: works. Reached {} through it, at {target}.",

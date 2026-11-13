@@ -208,16 +208,6 @@ mod passthrough {
     }
 
     #[test]
-    fn reserved_commands_are_errors() {
-        let env = Env::new();
-        env.gitaway()
-            .arg("tunnel")
-            .assert()
-            .code(1)
-            .stderr(predicate::str::contains("isn't available yet"));
-    }
-
-    #[test]
     fn list_is_no_longer_reserved_so_a_git_alias_works() {
         let env = Env::new();
         env.gitaway()
@@ -1525,6 +1515,169 @@ mod away {
             .assert()
             .code(1)
             .stderr(predicate::str::contains("gitaway key rotate home"));
+    }
+
+    /// Sets the profile's web address to `url`.
+    fn set_web_url(env: &Env, url: &str) {
+        env.gitaway()
+            .args(["profile", "set", "home", "web.url", url])
+            .assert()
+            .success();
+    }
+
+    /// Starts `gitaway tunnel home --port <local_port>` and waits until it
+    /// says it's up. Returns the process and the rest of its output lines.
+    fn start_tunnel(
+        env: &Env,
+        local_port: u16,
+    ) -> (std::process::Child, std::sync::mpsc::Receiver<String>) {
+        use std::io::{BufRead, BufReader};
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
+        let mut child = env
+            .gitaway_std()
+            .args(["tunnel", "home", "--port", &local_port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    return;
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(line) if line.contains("is up") => return (child, rx),
+                Ok(_) => {}
+                Err(_) => {
+                    let _ = child.kill();
+                    let out = child.wait_with_output().unwrap();
+                    panic!(
+                        "the tunnel never came up: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tunnel_serves_the_web_server_here_until_stopped() {
+        use std::io::{Read, Write};
+
+        let env = Env::new();
+        let web_port = http_server();
+        away_profile(&env, &[web_port]);
+        set_web_url(&env, &format!("http://192.0.2.10:{web_port}"));
+        let local_port = closed_port();
+
+        let (mut child, lines) = start_tunnel(&env, local_port);
+        for _ in 0..2 {
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", local_port)).unwrap();
+            stream
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        }
+
+        #[cfg(unix)]
+        {
+            // Stopping it is a normal end, not an error.
+            let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
+            assert!(child.wait().unwrap().success());
+            let rest: Vec<String> = lines.iter().collect();
+            assert!(rest.iter().any(|line| line == "Tunnel closed."), "{rest:?}");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = lines;
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        // The port is free again.
+        std::net::TcpListener::bind(("127.0.0.1", local_port)).unwrap();
+    }
+
+    #[test]
+    fn tunnel_without_a_web_address_says_how_to_set_one() {
+        let env = Env::new();
+        away_profile(&env, &[]);
+        env.gitaway()
+            .args(["tunnel", "home"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("gitaway profile set home web.url"));
+    }
+
+    #[test]
+    fn tunnel_needs_hosts_to_route_the_web_address() {
+        let env = Env::new();
+        away_profile(&env, &[]);
+        set_web_url(&env, "http://192.0.2.20:3000");
+        env.gitaway()
+            .args(["tunnel", "home"])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("[hosts]").and(predicate::str::contains("192.0.2.20")),
+            );
+    }
+
+    #[test]
+    fn tunnel_on_a_port_in_use_says_how_to_choose_another() {
+        let env = Env::new();
+        away_profile(&env, &[]);
+        set_web_url(&env, "http://192.0.2.10:3000");
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port().to_string();
+        env.gitaway()
+            .args(["tunnel", "home", "--port", &port])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("already in use").and(predicate::str::contains("--port")),
+            );
+    }
+
+    #[test]
+    fn tunnel_at_home_points_at_the_web_address_without_a_tunnel_or_device_key() {
+        let env = Env::new();
+        let (port, server_host_key) = ssh_server(15);
+        let home_ssh = format!("127.0.0.1:{port}");
+        // The endpoint can't be reached, so using the tunnel would fail.
+        env.add_profile(
+            "home",
+            &[
+                "--home-ssh",
+                &home_ssh,
+                "--host-key",
+                &server_host_key,
+                "--host",
+                "127.0.0.1=10.0.0.1",
+            ],
+        );
+        set_web_url(&env, "http://127.0.0.1:3000");
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args(["tunnel", "home"])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("You're home")
+                    .and(predicate::str::contains("open http://127.0.0.1:3000/")),
+            );
     }
 }
 

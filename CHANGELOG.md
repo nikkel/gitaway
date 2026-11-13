@@ -7,10 +7,11 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - A Homebrew tap: `brew install nikkel/tap/gitaway` installs the prebuilt binary, the `git-away` command and the man pages on macOS and Linux. It follows each new release within a day.
+- `gitaway tunnel`: opens your git server's web interface on this computer, through the tunnel, until Ctrl+C. It serves the profile's new `[web] url` on `http://localhost:<port>`, asking for the address the first time; at home it just prints the address to open. The tunnel sends WireGuard keepalives while it's open. While it runs, other gitaway commands for the same profile wait for it to stop.
 
 ### Changed
 
-- `list` is no longer reserved: the planned command that listed your repositories through the git server's API is dropped, since it needed an API token on every device. `gitaway list` now goes to git, so a git alias named `list` works. The planned `gitaway tunnel` will let you use the git server's own web interface instead.
+- `list` is no longer reserved: the planned command that listed your repositories through the git server's API is dropped, since it needed an API token on every device. `gitaway list` now goes to git, so a git alias named `list` works. `gitaway tunnel` lets you use the git server's own web interface instead.
 
 ## [0.1.1] - 2026-11-13
 

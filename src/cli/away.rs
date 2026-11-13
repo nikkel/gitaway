@@ -76,8 +76,15 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 
     let runtime = runtime()?;
     let result = runtime.block_on(async {
-        let transport: Arc<dyn Transport> =
-            Arc::from(transport::open(name.as_str(), &plan.profile, secrets).await?);
+        let transport: Arc<dyn Transport> = Arc::from(
+            transport::open(
+                name.as_str(),
+                &plan.profile,
+                secrets,
+                transport::Lifetime::OneCommand,
+            )
+            .await?,
+        );
         let proxy = Proxy::start(transport, plan.profile.hosts.clone())
             .await
             .map_err(|e| Error::msg(format!("couldn't start the local proxy: {e}")))?;
