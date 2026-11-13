@@ -16,6 +16,10 @@
 //!
 //! [hosts]                           # LAN address -> address through the tunnel
 //! "192.0.2.10" = "10.0.0.1"
+//!
+//! [web]                             # optional: for `gitaway tunnel`
+//! url = "http://192.0.2.10:3000"    # the git server's web address at home
+//! # local_port = 3000               # where `tunnel` serves it; default: url's port
 //! ```
 //!
 //! Unknown fields are errors, so a typo is reported instead of silently
@@ -35,7 +39,7 @@ use crate::address::HostPort;
 use crate::git::remote_url::RemoteUrl;
 
 use super::name::ProfileName;
-use super::value::{HostKey, InterfaceAddress, WireGuardPublicKey};
+use super::value::{HostKey, InterfaceAddress, WebUrl, WireGuardPublicKey};
 
 /// The smallest MTU accepted. Anything lower can't carry a useful TCP segment.
 pub const MIN_MTU: u16 = 576;
@@ -53,6 +57,9 @@ pub struct Profile {
     /// the tunnel.
     #[serde(default)]
     pub hosts: HostMap,
+    /// The git server's web interface, which `gitaway tunnel` serves on
+    /// this computer.
+    pub web: Option<Web>,
 }
 
 /// The VPN used to reach a profile from elsewhere.
@@ -96,6 +103,24 @@ impl Home {
     /// The SSH port, defaulting to 22.
     pub fn ssh_port(&self) -> u16 {
         self.ssh.port.unwrap_or(22)
+    }
+}
+
+/// The `[web]` table: the git server's web interface, for `gitaway tunnel`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Web {
+    /// Its address on the home network, as you'd open it at home.
+    pub url: WebUrl,
+    /// The port `gitaway tunnel` listens on, on this computer. Defaults to
+    /// the url's own port.
+    pub local_port: Option<u16>,
+}
+
+impl Web {
+    /// The port `gitaway tunnel` listens on: `local_port`, else the url's.
+    pub fn local_port(&self) -> u16 {
+        self.local_port.unwrap_or_else(|| self.url.port())
     }
 }
 
@@ -248,6 +273,15 @@ impl Profile {
                 }
             }
         }
+        if self
+            .web
+            .as_ref()
+            .is_some_and(|web| web.local_port == Some(0))
+        {
+            return Err(ParseError::Invalid(
+                "web.local_port must be a port number from 1 to 65535".to_owned(),
+            ));
+        }
         Ok(())
     }
 }
@@ -313,6 +347,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(profile.home.unwrap().ssh_port(), 22);
+    }
+
+    #[test]
+    fn web_is_optional_and_its_local_port_defaults_to_the_urls() {
+        assert_eq!(with_transport("").unwrap().web, None);
+        let web = with_transport("[web]\nurl = \"http://192.0.2.10:3000\"")
+            .unwrap()
+            .web
+            .unwrap();
+        assert_eq!(web.local_port(), 3000);
+        let web = with_transport("[web]\nurl = \"https://192.0.2.10\"\nlocal_port = 8443")
+            .unwrap()
+            .web
+            .unwrap();
+        assert_eq!(web.url.port(), 443);
+        assert_eq!(web.local_port(), 8443);
+    }
+
+    #[test]
+    fn invalid_web_settings_are_rejected() {
+        for bad in [
+            "[web]\nurl = \"ssh://192.0.2.10:2222\"",
+            "[web]\nlocal_port = 3000",
+            "[web]\nurl = \"http://192.0.2.10:3000\"\nlocal_port = 0",
+            "[web]\nurl = \"http://192.0.2.10:3000\"\nport = 3000",
+        ] {
+            assert!(with_transport(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

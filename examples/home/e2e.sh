@@ -114,6 +114,21 @@ git -C http-clone commit -qm "push over http"
 [ -f ssh-clone/http.txt ] || fail "pull over ssh didn't bring the commit pushed over http"
 [ "$(git -C ssh-clone remote get-url origin)" = "$SSH_URL" ] || fail "the remote URL changed"
 
+step "Away: the web interface on this computer with gitaway tunnel"
+"$GITAWAY" profile set home web.url http://192.0.2.10:3000 >/dev/null
+"$GITAWAY" tunnel home --port 18080 >"$work/tunnel.log" 2>&1 &
+tunnel_pid=$!
+for _ in $(seq 30); do
+    grep -q "is up" "$work/tunnel.log" && break
+    sleep 1
+done
+grep -q "is up" "$work/tunnel.log" || { cat "$work/tunnel.log" >&2; fail "the tunnel didn't come up"; }
+curl -fs http://localhost:18080/api/healthz | grep -q pass \
+    || { cat "$work/tunnel.log" >&2; fail "the web interface didn't answer through the tunnel"; }
+kill -TERM "$tunnel_pid"
+wait "$tunnel_pid" || fail "gitaway tunnel didn't stop cleanly"
+grep -q "Tunnel closed" "$work/tunnel.log" || fail "gitaway tunnel didn't say it closed"
+
 step "Home: with the forge on the local network, commands go directly"
 expect "Tunnel: not tested" "$GITAWAY" setup lan --yes --config "$work/laptop.conf" \
     --url ssh://git@127.0.0.1:2222/alice/app.git

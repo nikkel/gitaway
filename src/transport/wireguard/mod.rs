@@ -112,6 +112,27 @@ impl Tunnel {
         self.device.read(async |d| d.listen_port()).await
     }
 
+    /// Sets how often, in seconds, to send the peer a keepalive packet when
+    /// the tunnel is otherwise quiet. `None` sends none.
+    pub async fn set_keepalive(
+        &mut self,
+        peer_key: &WireGuardPublicKey,
+        seconds: Option<u16>,
+    ) -> Result<(), TransportError> {
+        let peer = x25519::PublicKey::from(peer_key.to_bytes());
+        let found = self
+            .device
+            .modify_peer(&peer, |peer| peer.set_keepalive(seconds))
+            .await
+            .map_err(|e| TransportError::Setup(e.to_string()))?;
+        if !found {
+            return Err(TransportError::Setup(
+                "the tunnel's server is missing from its own settings".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether a handshake with the peer has completed, so packets can
     /// cross the tunnel.
     pub async fn handshake_done(&self) -> bool {
@@ -134,11 +155,14 @@ pub struct WireGuardTransport {
 
 impl WireGuardTransport {
     /// Starts the tunnel for profile `name`. The device's secrets are
-    /// handed to gotatun and wiped when the tunnel closes.
+    /// handed to gotatun and wiped when the tunnel closes. With `keepalive`,
+    /// a keepalive packet goes to the server whenever the tunnel has been
+    /// quiet for that many seconds.
     pub async fn open(
         name: &str,
         settings: &WireGuard,
         secrets: DeviceSecrets,
+        keepalive: Option<u16>,
     ) -> Result<Self, TransportError> {
         let address = settings
             .address
@@ -153,14 +177,21 @@ impl WireGuardTransport {
         }
         let endpoint = resolve_endpoint(settings).await?;
         let mtu = settings.mtu.unwrap_or(DEFAULT_MTU);
-        Self::start(
+        let mut transport = Self::start(
             address.ip,
             mtu,
             secrets,
             &settings.server_public_key,
             endpoint,
         )
-        .await
+        .await?;
+        if keepalive.is_some() {
+            transport
+                .tunnel
+                .set_keepalive(&settings.server_public_key, keepalive)
+                .await?;
+        }
+        Ok(transport)
     }
 
     async fn start(
@@ -561,7 +592,7 @@ mod tests {
                 address: Some("10.0.0.2/32".parse().unwrap()),
                 mtu: None,
             };
-            let error = WireGuardTransport::open("home", &settings, key.into())
+            let error = WireGuardTransport::open("home", &settings, key.into(), None)
                 .await
                 .err()
                 .unwrap();
@@ -582,10 +613,11 @@ mod tests {
                 address: None,
                 mtu: None,
             };
-            let error = WireGuardTransport::open("home", &settings, DeviceKey::generate().into())
-                .await
-                .err()
-                .unwrap();
+            let error =
+                WireGuardTransport::open("home", &settings, DeviceKey::generate().into(), None)
+                    .await
+                    .err()
+                    .unwrap();
             let message = error.to_string();
             assert!(
                 matches!(error, TransportError::NoAddress { .. }),

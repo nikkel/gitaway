@@ -56,6 +56,18 @@ pub enum Command {
     /// key pinned yet, it offers to pin this one; if the pinned key differs,
     /// it says so and offers to replace it. Finally it runs the home check.
     Check(CheckArgs),
+    /// Open your git server's web interface on this computer, through the
+    /// tunnel, until Ctrl+C.
+    ///
+    /// Serves the profile's `[web] url` (your git server's web address at
+    /// home) on `http://localhost:<port>`, through the tunnel, so you can use
+    /// the web interface away from home. The first time, it asks for that
+    /// address and saves it. At home it just prints the address to open: no
+    /// tunnel is needed. Only programs on this computer can reach the local
+    /// port, but any of them can while the tunnel runs; the server still asks
+    /// for its own login. Other gitaway commands for the profile wait until
+    /// the tunnel stops.
+    Tunnel(TunnelArgs),
 }
 
 /// `gitaway setup`
@@ -83,6 +95,18 @@ pub struct SetupArgs {
     /// save its host key without asking.
     #[arg(long, short)]
     pub yes: bool,
+}
+
+/// `gitaway tunnel`
+#[derive(Debug, Args)]
+pub struct TunnelArgs {
+    /// The profile. Defaults to the one this repository or your settings
+    /// choose.
+    pub profile: Option<String>,
+    /// The port on this computer, for this run only. Defaults to
+    /// `[web] local_port`, else the web address's own port.
+    #[arg(long, value_name = "PORT")]
+    pub port: Option<String>,
 }
 
 /// `gitaway check`

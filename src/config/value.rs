@@ -179,6 +179,99 @@ impl fmt::Display for InterfaceAddress {
     }
 }
 
+/// A web address on the home network, such as `http://192.0.2.10:3000`:
+/// where you'd open your git server's web interface at home.
+///
+/// Only `http://` and `https://` are accepted, and a user name or password
+/// in it is refused, so the profile never holds one. The path is kept, for
+/// servers that live under one (`http://192.0.2.10/git/`).
+///
+/// ```
+/// use gitaway::config::value::WebUrl;
+///
+/// let url: WebUrl = "http://192.0.2.10:3000".parse().unwrap();
+/// assert_eq!(url.address.host, "192.0.2.10");
+/// assert_eq!(url.port(), 3000);
+/// assert_eq!(url.on_port("localhost", 8080), "http://localhost:8080/");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(try_from = "String")]
+pub struct WebUrl {
+    /// Whether it's `https://`.
+    pub https: bool,
+    /// The host, and the port if the address names one.
+    pub address: crate::address::HostPort,
+    /// The path, starting with `/`.
+    pub path: String,
+}
+
+impl WebUrl {
+    /// The port: the one in the address, else 443 for `https://` and 80
+    /// for `http://`.
+    pub fn port(&self) -> u16 {
+        self.address
+            .port
+            .unwrap_or(if self.https { 443 } else { 80 })
+    }
+
+    /// The same address on another host and port, such as
+    /// `http://localhost:8080/` for the tunnel's local end.
+    pub fn on_port(&self, host: &str, port: u16) -> String {
+        format!("{}://{host}:{port}{}", self.scheme(), self.path)
+    }
+
+    fn scheme(&self) -> &'static str {
+        if self.https { "https" } else { "http" }
+    }
+}
+
+impl FromStr for WebUrl {
+    type Err = InvalidValue;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let invalid = || InvalidValue::new(s, "web address (such as http://192.0.2.10:3000)");
+        let (scheme, rest) = s.trim().split_once("://").ok_or_else(invalid)?;
+        let https = match scheme.to_ascii_lowercase().as_str() {
+            "http" => false,
+            "https" => true,
+            _ => return Err(invalid()),
+        };
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, rest) = rest.split_at(authority_end);
+        if let Some((_, host)) = authority.rsplit_once('@') {
+            // Never repeat what was before the `@`: it may be a password.
+            return Err(InvalidValue::new(
+                &format!("{scheme}://…@{host}{rest}"),
+                "web address without a user name or password (the server asks for those)",
+            ));
+        }
+        let address: crate::address::HostPort = authority.parse().map_err(|_| invalid())?;
+        let path = match rest.chars().next() {
+            Some('/') => rest.to_owned(),
+            Some(_) => format!("/{rest}"),
+            None => "/".to_owned(),
+        };
+        Ok(Self {
+            https,
+            address,
+            path,
+        })
+    }
+}
+
+impl TryFrom<String> for WebUrl {
+    type Error = InvalidValue;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl fmt::Display for WebUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}://{}{}", self.scheme(), self.address, self.path)
+    }
+}
+
 /// Implements `TryFrom<String>` (which serde uses) and `Display` for the
 /// string-backed types, so each isn't written out three times.
 macro_rules! string_backed {
@@ -292,5 +385,46 @@ mod tests {
         ] {
             assert!(bad.parse::<InterfaceAddress>().is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn web_urls() {
+        let url: WebUrl = "HTTP://192.0.2.10:3000".parse().unwrap();
+        assert!(!url.https);
+        assert_eq!(url.port(), 3000);
+        assert_eq!(url.to_string(), "http://192.0.2.10:3000/");
+
+        let url: WebUrl = "https://git.example.com/forge/?tab=repos".parse().unwrap();
+        assert!(url.https);
+        assert_eq!(url.port(), 443);
+        assert_eq!(url.path, "/forge/?tab=repos");
+        assert_eq!(
+            url.on_port("localhost", 8443),
+            "https://localhost:8443/forge/?tab=repos"
+        );
+
+        let url: WebUrl = "http://[2001:db8::1]".parse().unwrap();
+        assert_eq!(url.port(), 80);
+        assert_eq!(url.to_string(), "http://[2001:db8::1]/");
+    }
+
+    #[test]
+    fn invalid_web_urls() {
+        for bad in [
+            "192.0.2.10:3000",
+            "ftp://192.0.2.10",
+            "ssh://git@192.0.2.10:2222/alice/app.git",
+            "http://",
+            "http://192.0.2.10:99999",
+            "http://alice:secret@192.0.2.10:3000",
+            "http://alice@192.0.2.10:3000",
+        ] {
+            assert!(bad.parse::<WebUrl>().is_err(), "{bad}");
+        }
+        let error = "http://alice:secret@192.0.2.10:3000"
+            .parse::<WebUrl>()
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("secret"), "{error}");
     }
 }

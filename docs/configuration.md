@@ -47,6 +47,9 @@ host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDtqJ7zOtqQtYqOo0CpvDXNlMhV3HeJD
 
 [hosts]                               # which servers this profile handles
 "192.0.2.10" = "10.0.0.1"
+
+[web]                                 # optional: for gitaway tunnel
+url = "http://192.0.2.10:3000"
 ```
 
 ### `[transport.wireguard]`
@@ -111,6 +114,19 @@ Which remotes this profile handles, and their addresses through the tunnel. Each
 - The host must be spelled the way your remote URL spells it. A remote that uses an alias from `~/.ssh/config` (`git@nas:alice/app.git`) only matches a key written as that alias. Away from home, that alias goes through the tunnel even when `~/.ssh/config` gives it a different `Hostname` or `Port`. Use a host-only key for an alias (`"nas" = "10.0.0.1"`), since ssh may connect on the port from its config.
 
 A network command runs the home check only when one of the hosts it may contact is listed here. That includes every push URL of the remote, every remote for `fetch --all` and `remote update`, and the repository's submodules. If any of them is a home host, the whole command uses the proxy, which still connects to the others directly. A command that would reach the home hosts of two different profiles is refused, because it can only use one tunnel. Remotes that aren't listed, such as `github.com`, go straight to git, even when this profile is the default.
+
+### `[web]`
+
+Your git server's web interface, which `gitaway tunnel` serves on this computer. Optional: the first `gitaway tunnel` asks for the address and saves it here.
+
+```toml
+[web]
+url = "http://192.0.2.10:3000"        # as you'd open it at home
+# local_port = 3000                   # optional
+```
+
+- `url` is the web address on your home network, `http://` or `https://`, with its port if it isn't 80 or 443. A path is kept (`http://192.0.2.10/git/`). It must not contain a user name or password. Its host must be in `[hosts]`, which says where it is through the tunnel.
+- `local_port` is the port `gitaway tunnel` listens on, on this computer. It defaults to the url's own port. `gitaway tunnel --port <port>` overrides it for one run.
 
 ## Which profile is used
 

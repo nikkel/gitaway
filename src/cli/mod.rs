@@ -7,8 +7,7 @@
 //!   no command, -h, --help ─────────► gitaway's help
 //!   --version ──────────────────────► gitaway's version
 //!   setup, profile, use, peer, key, ►
-//!   check                            gitaway's own commands (clap)
-//!   tunnel ─────────────────────────► reserved: "not available yet"
+//!   check, tunnel                    gitaway's own commands (clap)
 //!   network command (push, fetch …) ► network::plan, then git directly,
 //!                                     or through the tunnel (away)
 //!   anything else ──────────────────► git, exactly as typed
@@ -28,7 +27,8 @@
 //!
 //! A new gitaway command: add it to [`args::Command`], its name to
 //! [`OWN_COMMANDS`], and a module here that runs it. Remove it from
-//! [`RESERVED_COMMANDS`] if it was reserved.
+//! [`RESERVED_COMMANDS`] if it was reserved. A name planned for later can
+//! be claimed early by adding it to [`RESERVED_COMMANDS`].
 
 pub mod args;
 pub mod away;
@@ -38,6 +38,7 @@ pub mod network;
 pub mod profile_cmd;
 pub mod prompt;
 pub mod setup_cmd;
+pub mod tunnel_cmd;
 pub mod use_cmd;
 
 use std::ffi::OsString;
@@ -56,11 +57,11 @@ use crate::proxy;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
-pub const OWN_COMMANDS: &[&str] = &["setup", "profile", "use", "peer", "key", "check"];
+pub const OWN_COMMANDS: &[&str] = &["setup", "profile", "use", "peer", "key", "check", "tunnel"];
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
-pub const RESERVED_COMMANDS: &[&str] = &["tunnel"];
+pub const RESERVED_COMMANDS: &[&str] = &[];
 
 const HELP: &str = "\
 gitaway: reach your self-hosted git server from anywhere
@@ -74,6 +75,7 @@ gitaway's own commands:
   use        Pin the current repository to a profile
   peer       Print what the WireGuard server needs to know about this device
   key        Replace or import this device's WireGuard key
+  tunnel     Open your git server's web interface here, through the tunnel
 
 Every other command goes to git. Network commands first check whether you're
 at the remote's home network: clone, fetch, pull, push, ls-remote, remote
@@ -192,6 +194,11 @@ fn run_own_command(
             let store = open_store()?;
             let name = pick_profile(&store, command.profile, profile_flag, global_options)?;
             check_cmd::run(&store, &name, command.yes)
+        }
+        args::Command::Tunnel(command) => {
+            let store = open_store()?;
+            let name = pick_profile(&store, command.profile, profile_flag, global_options)?;
+            tunnel_cmd::run(&store, &name, command.port.as_deref())
         }
         args::Command::Key(args::KeyCommand::Import { profile, yes }) => {
             let store = open_store()?;

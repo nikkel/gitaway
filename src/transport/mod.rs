@@ -128,15 +128,35 @@ pub enum TransportError {
     },
 }
 
+/// How long a tunnel stays open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifetime {
+    /// For one command, such as a push.
+    OneCommand,
+    /// Until the user stops it (`gitaway tunnel`). The tunnel sends a
+    /// keepalive after [`KEEPALIVE_SECONDS`] of quiet, so a router between
+    /// here and the server doesn't forget the connection.
+    LongRunning,
+}
+
+/// After how many quiet seconds a [`Lifetime::LongRunning`] tunnel sends a
+/// keepalive. 25 is what WireGuard recommends for getting through NAT.
+pub const KEEPALIVE_SECONDS: u16 = 25;
+
 /// Opens the profile's tunnel with this device's secrets.
 pub async fn open(
     name: &str,
     profile: &Profile,
     secrets: DeviceSecrets,
+    lifetime: Lifetime,
 ) -> Result<Box<dyn Transport>, TransportError> {
+    let keepalive = match lifetime {
+        Lifetime::OneCommand => None,
+        Lifetime::LongRunning => Some(KEEPALIVE_SECONDS),
+    };
     match &profile.transport {
         profile::Transport::WireGuard(settings) => Ok(Box::new(
-            wireguard::WireGuardTransport::open(name, settings, secrets).await?,
+            wireguard::WireGuardTransport::open(name, settings, secrets, keepalive).await?,
         )),
     }
 }

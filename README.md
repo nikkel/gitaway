@@ -207,9 +207,29 @@ The [configuration reference](docs/configuration.md) explains each setting.
 | `gitaway check [name]` | Test the tunnel, pin or verify the home server's host key through it, and run the home check. |
 | `gitaway key rotate [name]` | Replace the profile's device key. The server needs the new public key afterwards. |
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
+| `gitaway tunnel [name]` | Open your git server's web interface on this computer, through the tunnel, until Ctrl+C. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest. Planned: `tunnel`, which keeps the tunnel open so you can use your git server's web interface from anywhere.
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest.
+
+### Using the web interface away from home
+
+```console
+$ gitaway tunnel
+gitaway tunnel needs your git server's web address on the home network: the one you'd open in a browser at home.
+Web address (such as http://192.0.2.10:3000): http://192.0.2.10:3000
+Saved it in profile `home`.
+Tunnel for profile `home` is up.
+  http://localhost:3000/  ->  your git server at http://192.0.2.10:3000/
+  Other gitaway commands for `home` wait until it stops.
+Press Ctrl+C to stop.
+```
+
+Open the `localhost` address in your browser. The web address is asked for once and saved as `[web] url` in the profile; its host must be in `[hosts]`. The local port is the server's own, unless you pick another with `--port` (or `gitaway profile set home web.local_port 8080`). At home, `gitaway tunnel` just prints the address to open.
+
+- The server still thinks its address is the home one. Clone URLs it shows are the home ones, which is what gitaway uses anyway, and some servers show a warning about the address on their sign-in page. Signing in through another site (OAuth) may not work.
+- An `https://` server's certificate names the server, not `localhost`, so the browser warns about it.
+- While the tunnel runs, other gitaway commands for the same profile wait until it stops.
 
 ## Configuration
 
@@ -245,6 +265,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 - **On Linux, gitaway can't be inspected while it runs.** It marks itself not dumpable, so no core dump holds the device key and other programs running as you can't attach a debugger or read its memory.
 - **git authentication is unchanged.** gitaway never sees your SSH keys, passwords or tokens. git and ssh handle them as usual.
 - **The tunnel lives inside gitaway, for one command.** No system VPN, network adapter, routes or root. The proxy git talks to listens only on `127.0.0.1` and needs a random token that changes every command. Only the profile's `[hosts]` go through the tunnel; anything else git contacts is connected directly, as git would. Two commands using the same profile take turns, because a WireGuard server keeps one session per device.
+- **`gitaway tunnel` opens a port anyone on this computer can use.** It listens only on `localhost`, never on the network, and only forwards to your git server's web address. But it has no password of its own, so any program or user on this computer can reach the web interface while it runs. The server still asks for its own login. Stop it with Ctrl+C when you're done.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
