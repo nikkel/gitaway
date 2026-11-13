@@ -154,7 +154,7 @@ Each module starts with a `//!` comment that explains its purpose, how it fits i
 - `git-away.1` is the same page under the name git opens for `git away --help`.
 - Every gitaway command (`gitaway-profile-add.1`, …) gets a page generated from its clap definition, so its flags and help text can't drift from the code.
 
-**Man pages are installed by packages, not by `cargo install`.** `man` only reads files from man directories; it can't ask a program for its page. `cargo install` can only copy binaries, so the release workflow generates the pages at build time (`cargo xtask man --out dist-man`, run by `.github/workflows/release-build-setup.yml`) and puts them in every archive. The installer scripts don't place them; a Homebrew formula will. The pages aren't committed, so there's no copy to keep in sync. CI generates them on every push, so a broken page is caught early. Users of `cargo install` use `--help` instead.
+**Man pages are installed by packages, not by `cargo install`.** `man` only reads files from man directories; it can't ask a program for its page. `cargo install` can only copy binaries, so the release workflow generates the pages at build time (`cargo xtask man --out dist-man`, run by `.github/workflows/release-build-setup.yml`) and puts them in every archive. The installer scripts don't place them; the Homebrew formula (in the separate `nikkel/homebrew-tap` repo, which follows our releases) does. The pages aren't committed, so there's no copy to keep in sync. CI generates them on every push, so a broken page is caught early. Users of `cargo install` use `--help` instead.
 
 ## Supported git versions
 

@@ -78,6 +78,14 @@ $ gh attestation verify gitaway-x86_64-unknown-linux-musl.tar.xz \
 
 Replace the file name and the version. Keep `--source-ref`: without it, the check also accepts files built from an unreleased branch.
 
+### Homebrew (macOS and Linux)
+
+```console
+$ brew install nikkel/tap/gitaway
+```
+
+This installs the prebuilt binary, the `git-away` command and the man pages, and `brew upgrade gitaway` updates it. The [tap](https://github.com/nikkel/homebrew-tap) records each archive's SHA-256, taken only after the archive passed the attestation check below, and Homebrew checks it again on install. The new version reaches the tap within a day of a release.
+
 ### From source
 
 With [Rust](https://rustup.rs) 1.95 or newer, install the latest release from crates.io:
@@ -96,7 +104,7 @@ This installs two commands, `gitaway` and `git-away`. They're the same program: 
 
 On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. It asks again after each update, because the permission belongs to that exact build of the program; a release binary signed by Apple (planned) will stop that.
 
-`gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) are in the release archives (`dist-man/`; copy them into a `man1` folder on your `MANPATH`) and will come with Homebrew. The installer scripts and `cargo install` don't install them, so `git away --help` reports that there's no manual entry; use `git away -h` instead.
+`gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) are in the release archives (`dist-man/`; copy them into a `man1` folder on your `MANPATH`) and come with Homebrew. The installer scripts and `cargo install` don't install them, so `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
 ## Quick start
 
@@ -201,7 +209,7 @@ The [configuration reference](docs/configuration.md) explains each setting.
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
 | anything else | Passed to git. |
 
-`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and once packaged installs exist, `man gitaway` will cover the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
+`--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest. Planned: `list` (your repositories on the forge) and `tunnel` (keep the tunnel open for other tools).
 
 ## Configuration
 
