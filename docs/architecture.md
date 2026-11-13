@@ -51,7 +51,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 ├─ --version ─────────────────────────▶ gitaway's version
 ├─ setup, profile, use, peer, key, ───▶ gitaway's own commands
 │  check
-├─ list, tunnel ──────────────────────▶ "not available yet" (reserved)
+├─ tunnel ────────────────────────────▶ "not available yet" (reserved)
 ├─ network command ───────────────────▶ choose profile ─▶ home check ─▶ git
 │  (clone, fetch, pull, push, ls-remote,                       │
 │   remote update/show/prune, remote add -f,                   └─ not home ─▶ git through the tunnel
@@ -60,7 +60,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 └─ anything else ─────────────────────▶ git, exactly as typed
 ```
 
-- gitaway's own commands take precedence over git aliases with the same name. The reserved names are claimed now, so an alias can't silently change meaning when those commands arrive.
+- gitaway's own commands take precedence over git aliases with the same name. The reserved name is claimed now, so an alias can't silently change meaning when that command arrives.
 - Classifying a command skips git's global options (`-C dir`, `-c key=value`, `--git-dir=…`) to find the subcommand. clap only ever sees gitaway's own commands, because it would reject git's options.
 - For a network command, gitaway asks git which remote URL the command will use (`git remote get-url`, `git ls-remote --get-url`), then picks a profile using the order in the [configuration reference](configuration.md#which-profile-is-used).
 - If the profile's `[hosts]` doesn't list the remote's host, git runs without a home check.

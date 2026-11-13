@@ -8,7 +8,7 @@
 //!   --version ──────────────────────► gitaway's version
 //!   setup, profile, use, peer, key, ►
 //!   check                            gitaway's own commands (clap)
-//!   list, tunnel ───────────────────► reserved: "not available yet"
+//!   tunnel ─────────────────────────► reserved: "not available yet"
 //!   network command (push, fetch …) ► network::plan, then git directly,
 //!                                     or through the tunnel (away)
 //!   anything else ──────────────────► git, exactly as typed
@@ -60,7 +60,7 @@ pub const OWN_COMMANDS: &[&str] = &["setup", "profile", "use", "peer", "key", "c
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
-pub const RESERVED_COMMANDS: &[&str] = &["list", "tunnel"];
+pub const RESERVED_COMMANDS: &[&str] = &["tunnel"];
 
 const HELP: &str = "\
 gitaway: reach your self-hosted git server from anywhere
