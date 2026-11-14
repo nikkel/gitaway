@@ -65,8 +65,8 @@ pub enum Command {
     /// address and saves it. At home it just prints the address to open: no
     /// tunnel is needed. Only programs on this computer can reach the local
     /// port, but any of them can while the tunnel runs; the server still asks
-    /// for its own login. Other gitaway commands for the profile wait until
-    /// the tunnel stops.
+    /// for its own login. While it runs, other gitaway commands for the
+    /// profile use its tunnel.
     Tunnel(TunnelArgs),
 }
 

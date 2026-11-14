@@ -7,9 +7,11 @@
 //!  home check passes? ─────── yes ─▶ "you're home: open <url>", exit 0
 //!  listen on 127.0.0.1:<port> (and [::1]:<port>) ── taken? ──▶ error: try --port
 //!  take the profile's lock, load the device key, open the tunnel (with keepalives)
+//!    (another `gitaway tunnel` for the profile already running? ──▶ error)
 //!  one connection to the web server ── fails? ──▶ say why (no handshake, …)
+//!  lend the tunnel: a proxy for other gitaway commands, and runs/<profile>.toml
 //!  serve: each local connection ──▶ a connection through the tunnel, bytes copied both ways
-//!  Ctrl+C, a closed terminal or SIGTERM ──▶ close everything, exit 0
+//!  Ctrl+C, a closed terminal or SIGTERM ──▶ remove the runs file, close everything, exit 0
 //! ```
 //!
 //! The local port is only reachable from this computer, and only ever
@@ -23,8 +25,10 @@
 //! use anyway. Some servers show a warning about the address on their
 //! sign-in page.
 //!
-//! While the tunnel runs it holds the profile's lock, so other gitaway
-//! commands for the profile wait until it stops.
+//! While the tunnel runs it holds the profile's lock, and lends the tunnel
+//! to other gitaway commands for the profile, such as a push, through a
+//! second loopback proxy that only gitaway uses (see
+//! [`crate::config::run_file`] and [`crate::transport::shared`]).
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
@@ -37,14 +41,16 @@ use toml_edit::value;
 
 use crate::config::name::ProfileName;
 use crate::config::profile::{Profile, Web};
+use crate::config::run_file::RunFile;
 use crate::config::store::Store;
 use crate::config::value::WebUrl;
 use crate::error::Error;
 use crate::home_check::{self, Verdict};
+use crate::proxy::Proxy;
 use crate::transport::{self, Lifetime, Transport};
 
 use super::web_guard::{self, Opening};
-use super::{away, prompt};
+use super::{away, prompt, tunnel_access};
 
 /// How long to pause after the system refuses a new connection (too many
 /// open files, say) before accepting again, so the loop doesn't spin.
@@ -87,7 +93,7 @@ pub fn run(store: &Store, name: &ProfileName, port: Option<&str>) -> Result<i32,
         );
     }
 
-    let (_lock, secrets) = away::take_tunnel(store, name)?;
+    let (_lock, secrets) = tunnel_access::for_tunnel(store, name)?;
     let runtime = away::runtime()?;
     let local_url = web.url.on_port("localhost", local_port);
     let result = runtime.block_on(async {
@@ -97,15 +103,24 @@ pub fn run(store: &Store, name: &ProfileName, port: Option<&str>) -> Result<i32,
         // One connection now, so a tunnel that can't work says why before
         // anything claims it's up.
         drop(transport.connect(target).await?);
+        let lent = Proxy::start_shared(transport.clone(), profile.hosts.clone())
+            .await
+            .map_err(|e| Error::msg(format!("couldn't start the proxy for other commands: {e}")))?;
+        let run_file = RunFile::new(lent.address(), lent.token())
+            .publish(store.dir(), name)
+            .map_err(|e| Error::msg(format!("couldn't save where the tunnel is: {e}")))?;
         let forwards = start_forwards(listeners, transport, target)?;
         println!(
             "Tunnel for profile `{name}` is up.\n  {local_url}  ->  your git server at {}\n  \
-             Other gitaway commands for `{name}` wait until it stops.\nPress Ctrl+C to stop.",
+             gitaway commands for `{name}` use this tunnel while it runs.\nPress Ctrl+C to stop.",
             web.url
         );
         stop_requested()
             .await
             .map_err(|e| Error::msg(format!("couldn't watch for Ctrl+C: {e}")))?;
+        // Commands stop looking for the tunnel before it goes.
+        drop(run_file);
+        drop(lent);
         drop(forwards);
         println!("Tunnel closed.");
         Ok(0)

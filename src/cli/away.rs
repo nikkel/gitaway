@@ -6,9 +6,10 @@
 //!  ProxyCommand/ProxyJump? ──────────────────────▶ error: move it to ~/.ssh/config
 //!  https home URL, and a one-off proxy (-c …)
 //!  would outrank gitaway's? ─────────────────────▶ error: run it without that
-//!  take the profile's lock (wait if it's busy)
-//!  load the device key
-//!  open the tunnel ─▶ start the proxy ─▶ run git as a child, pointed at the proxy
+//!  `gitaway tunnel` running for the profile? ─▶ borrow its tunnel
+//!    otherwise: take the profile's lock (wait if it's busy), load the device
+//!    key, open the tunnel
+//!  start the proxy ─▶ run git as a child, pointed at the proxy
 //!  wait for git (Ctrl+C reaches git too; a SIGTERM to gitaway is passed on)
 //!  git failed and the tunnel knows why? ────────▶ say why
 //!  close the proxy and the tunnel, exit with git's code
@@ -22,19 +23,16 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::lock::ProfileLock;
-use crate::config::name::ProfileName;
-use crate::config::store::Store;
 use crate::error::Error;
 use crate::git::remote_url::Scheme;
 use crate::git::repo::Repo;
 use crate::git::runner::{Git, exit_code, spawn_error};
-use crate::keys::store::{DeviceSecrets, KeyStore};
 use crate::proxy::Proxy;
 use crate::proxy::git_env::{self, HomeHttp, SshSettings};
-use crate::transport::{self, Transport};
+use crate::transport::Transport;
 
 use super::network::{AwayPlan, Contact};
+use super::tunnel_access;
 
 /// How long to wait for background tasks to stop after git has finished.
 pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
@@ -72,19 +70,11 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 
     let store = super::open_store()?;
     let name = &plan.name;
-    let (_lock, secrets) = take_tunnel(&store, name)?;
+    let (_lock, source) = tunnel_access::for_command(&store, name)?;
 
     let runtime = runtime()?;
     let result = runtime.block_on(async {
-        let transport: Arc<dyn Transport> = Arc::from(
-            transport::open(
-                name.as_str(),
-                &plan.profile,
-                secrets,
-                transport::Lifetime::OneCommand,
-            )
-            .await?,
-        );
+        let transport: Arc<dyn Transport> = Arc::from(source.open(name, &plan.profile).await?);
         let proxy = Proxy::start(transport, plan.profile.hosts.clone())
             .await
             .map_err(|e| Error::msg(format!("couldn't start the local proxy: {e}")))?;
@@ -187,30 +177,6 @@ fn home_http(home: &[Contact]) -> (Vec<&str>, Vec<&str>) {
     remotes.sort_unstable();
     remotes.dedup();
     (urls, remotes)
-}
-
-/// Takes the profile's lock (waiting if another command holds it, since the
-/// server keeps one session per device key) and loads the device key. Hold
-/// the lock until the tunnel is closed.
-pub(crate) fn take_tunnel(
-    store: &Store,
-    name: &ProfileName,
-) -> Result<(ProfileLock, DeviceSecrets), Error> {
-    let lock = ProfileLock::acquire(store.dir(), name, || {
-        eprintln!(
-            "gitaway: another gitaway command is using profile `{name}`'s tunnel; waiting for it to finish…"
-        );
-    })
-    .map_err(|e| Error::msg(e.to_string()))?;
-
-    let keys = KeyStore::from_env(store.dir().clone())?;
-    let secrets = keys.load(name)?.ok_or_else(|| {
-        Error::msg(format!(
-            "profile `{name}` has no device key, so it can't open the tunnel. \
-             Create one with `gitaway key rotate {name}` and give the server its public key"
-        ))
-    })?;
-    Ok((lock, secrets))
 }
 
 /// Starts the small runtime the tunnel and proxy run on.

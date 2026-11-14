@@ -65,7 +65,7 @@ gitaway [--profile <name>] [git global options] <command> [args]
 - If the profile's `[hosts]` doesn't list the remote's host, git runs without a home check.
 - If one of gitaway's own git lookups fails (a bad `-C` folder, a broken config file), the command goes to git as typed. The real command fails the same way before touching the network, so the user sees git's own message and exit code.
 - At home, on Linux and macOS, gitaway replaces itself with git (`exec`), so exit codes, signals and terminal behaviour are exactly git's. On Windows it runs git and waits.
-- Away, gitaway must stay alive to run the tunnel, so it runs git as a child and waits (`src/cli/away.rs`). Ctrl+C reaches git directly (it's in the same process group) and gitaway waits for it to finish; a SIGTERM sent only to gitaway is passed on to git. Then the proxy and tunnel close and gitaway exits with git's code. A per-profile file lock (`src/config/lock.rs`) makes a second command on the same profile wait, because a WireGuard server keeps one session per device key.
+- Away, gitaway must stay alive to run the tunnel, so it runs git as a child and waits (`src/cli/away.rs`). Ctrl+C reaches git directly (it's in the same process group) and gitaway waits for it to finish; a SIGTERM sent only to gitaway is passed on to git. Then the proxy and tunnel close and gitaway exits with git's code. A per-profile file lock (`src/config/lock.rs`) makes a second command on the same profile wait, because a WireGuard server keeps one session per device key, unless a `gitaway tunnel` is running for it (see below).
 - A different host key at the home address means away, not an error: another network can have its own SSH server at that address. The tunnel is authenticated by WireGuard, so using it is safe, and a note says the key may have changed in case you are home.
 
 ## The home check
@@ -135,22 +135,36 @@ browser ──▶ 127.0.0.1:<port> / [::1]:<port> ──▶ Transport::connect(w
 - It runs the home check first; at home it just prints the web address.
 - It listens before taking the profile's lock or reading the device key, so a busy port is reported at once. It never picks another port by itself.
 - The tunnel is opened as `Lifetime::LongRunning`, which turns on WireGuard keepalives, so a router doesn't forget a quiet tunnel. One connection is made before it says it's up, so a tunnel that can't work says why at once.
-- It holds the profile's lock until it stops, so other gitaway commands for that profile wait.
+- It holds the profile's lock until it stops, and lends the tunnel to other gitaway commands for the profile (below).
 - Each browser connection becomes its own connection through the tunnel, with bytes copied both ways. Nothing is changed, which is why `https://` works (with a certificate warning) and why the server still sees its own home address as its name.
 - Before a plain-HTTP connection goes through, `src/cli/web_guard.rs` reads its first request head and checks that `Host` names `localhost`, `127.0.0.1` or `[::1]` with the tunnel's port. Otherwise it answers `421` and closes, so a web page using DNS rebinding can't reach the server. TLS connections pass unchecked: a page under another name fails the certificate check.
+
+### Lending the tunnel to other commands
+
+```text
+gitaway push ── lock busy? ── runs/<profile>.toml ──▶ SharedTunnel ──SOCKS "gitaway-tunnel" + token──▶ shared proxy (in gitaway tunnel)
+                                                                                                        │ tunnel side of its [hosts]?
+                                                                                                        ▼
+                                                                                                 its Transport
+```
+
+- Once the tunnel works, `gitaway tunnel` starts a second proxy (`Proxy::start_shared`, `src/proxy/mod.rs`) on `127.0.0.1` with its own token, and writes its address and token to `runs/<profile>.toml` (mode 600, `src/config/run_file.rs`). It removes the file when it stops.
+- That proxy only accepts the `gitaway-tunnel` SOCKS scope: an IP address on the tunnel side of its `[hosts]`, connected through its tunnel. Nothing is connected directly, and git's own requests are refused.
+- Commands get their tunnel from `src/cli/tunnel_access.rs`: lock free → delete any runs file as stale (a killed tunnel releases the lock but leaves the file), open their own; lock busy and a runs file whose proxy answers → use `SharedTunnel` (`src/transport/shared.rs`), a `Transport` over that proxy; otherwise wait and look again every 200 ms. Everything above `Transport` is unchanged.
+- A second `gitaway tunnel` for the profile is refused rather than borrowing, since stopping the first would break it.
 
 ## Code map
 
 | Path | Responsibility |
 |---|---|
-| `src/cli/` | The command line: dispatch (`mod.rs`), clap definitions (`args.rs`), prompts, and one module per command. `network.rs` decides what happens to a network command. |
+| `src/cli/` | The command line: dispatch (`mod.rs`), clap definitions (`args.rs`), prompts, and one module per command. `network.rs` decides what happens to a network command; `tunnel_access.rs` decides whether a command opens its own tunnel or borrows a running `gitaway tunnel`'s. |
 | `src/git/` | Everything about git: classifying a command line, parsing remote URLs, reading a repository's remotes and config, and running git. |
-| `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies. |
+| `src/config/` | Profile and config files: their format, validation, location, atomic writes, and which profile applies; the per-profile lock and a running tunnel's runs file. |
 | `src/home_check.rs` | The home check. |
 | `src/hardening.rs` | Process hardening at start-up: on Linux, gitaway marks itself not dumpable before it loads a secret. |
 | `src/keys/` | Device keys: generating them, and keeping them in the OS keychain or a private file. |
-| `src/proxy/` | The per-command SOCKS5 proxy git talks to when away, and git's environment for it. |
-| `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, a userspace TCP/IP stack (`netstack.rs`), and readers for the client configs VPN servers hand out (`client_config.rs`), used by `gitaway setup`. See [adding a transport](adding-a-transport.md). |
+| `src/proxy/` | The per-command SOCKS5 proxy git talks to when away, and git's environment for it; also the proxy a running `gitaway tunnel` lends its tunnel through. |
+| `src/transport/` | Reaching home from elsewhere: the `Transport` trait, the WireGuard transport, a userspace TCP/IP stack (`netstack.rs`), borrowing a running tunnel (`shared.rs`), and readers for the client configs VPN servers hand out (`client_config.rs`), used by `gitaway setup`. See [adding a transport](adding-a-transport.md). |
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |

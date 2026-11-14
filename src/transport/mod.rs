@@ -16,6 +16,10 @@
 //! [`client_config`] reads the config file a VPN server gives a device, so
 //! `gitaway setup` can make a profile from it.
 //!
+//! [`shared::SharedTunnel`] is the one transport that isn't a VPN: it
+//! borrows the tunnel of a `gitaway tunnel` already running for the
+//! profile, since the server allows one session per device key.
+//!
 //! # Extending
 //!
 //! A new transport is a new [`crate::config::profile::Transport`] variant
@@ -26,6 +30,7 @@
 
 pub mod client_config;
 pub mod netstack;
+pub mod shared;
 pub mod wireguard;
 
 use std::future::Future;
@@ -117,6 +122,26 @@ pub enum TransportError {
     Timeout {
         /// The address inside the home network.
         target: SocketAddr,
+    },
+    /// The running `gitaway tunnel` whose tunnel this command borrows
+    /// started without this address in its `[hosts]`.
+    #[error(
+        "the running `gitaway tunnel` for this profile can't reach {target}: it isn't in the \
+         [hosts] the tunnel started with. Restart `gitaway tunnel` to use the profile's \
+         current settings"
+    )]
+    NotInRunningTunnel {
+        /// The address inside the home network.
+        target: SocketAddr,
+    },
+    /// The running `gitaway tunnel` whose tunnel this command borrows
+    /// couldn't connect.
+    #[error("the running `gitaway tunnel` for this profile couldn't connect to {target}: {reason}")]
+    RunningTunnel {
+        /// The address inside the home network.
+        target: SocketAddr,
+        /// What went wrong.
+        reason: String,
     },
     /// The connection through the tunnel failed.
     #[error("couldn't connect to {target} through the tunnel: {source}")]

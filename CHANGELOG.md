@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - A Homebrew tap: `brew install nikkel/tap/gitaway` installs the prebuilt binary, the `git-away` command and the man pages on macOS and Linux. It follows each new release within a day.
-- `gitaway tunnel`: opens your git server's web interface on this computer, through the tunnel, until Ctrl+C. It serves the profile's new `[web] url` on `http://localhost:<port>`, asking for the address the first time; at home it just prints the address to open. The tunnel sends WireGuard keepalives while it's open. It only forwards requests addressed to `localhost` (or `127.0.0.1`, `[::1]`) on its port, so web pages can't reach your server through it by DNS rebinding. While it runs, other gitaway commands for the same profile wait for it to stop.
+- `gitaway tunnel`: opens your git server's web interface on this computer, through the tunnel, until Ctrl+C. It serves the profile's new `[web] url` on `http://localhost:<port>`, asking for the address the first time; at home it just prints the address to open. The tunnel sends WireGuard keepalives while it's open. It only forwards requests addressed to `localhost` (or `127.0.0.1`, `[::1]`) on its port, so web pages can't reach your server through it by DNS rebinding. While it runs, other gitaway commands for the same profile use its tunnel instead of waiting for it to stop.
 
 ### Changed
 
