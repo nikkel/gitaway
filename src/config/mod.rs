@@ -11,6 +11,7 @@
 //! - [`value`] holds the validated value types profiles use (host keys, WireGuard keys, addresses).
 //! - [`resolve`] picks the profile for a command.
 //! - [`lock`] stops two commands using one profile's tunnel at once.
+//! - [`run_file`] tells other commands where a running `gitaway tunnel` lends its tunnel.
 //! - [`store`] loads and saves the files, safely, using `private_fs` for atomic, private writes.
 //!
 //! Secrets never appear in these files. They live in the OS keychain.
@@ -27,5 +28,6 @@ pub mod paths;
 pub(crate) mod private_fs;
 pub mod profile;
 pub mod resolve;
+pub mod run_file;
 pub mod store;
 pub mod value;

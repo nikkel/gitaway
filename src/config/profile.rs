@@ -185,6 +185,33 @@ impl HostMap {
         Some(SocketAddr::new(ip, tunnel.port.unwrap_or(port)))
     }
 
+    /// Whether `address` is on the tunnel side of an entry: what
+    /// [`HostMap::route`] could return. A host-only entry covers every port
+    /// of its address.
+    ///
+    /// ```
+    /// use gitaway::config::profile::Profile;
+    ///
+    /// let profile = Profile::from_toml(r#"
+    ///     [transport.wireguard]
+    ///     endpoint = "vpn.example.net:51820"
+    ///     server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    ///     [hosts]
+    ///     "192.0.2.10" = "10.0.0.1"
+    ///     "192.0.2.20:443" = "10.0.0.2:3000"
+    /// "#).unwrap();
+    /// assert!(profile.hosts.reaches("10.0.0.1:22".parse().unwrap()));
+    /// assert!(profile.hosts.reaches("10.0.0.2:3000".parse().unwrap()));
+    /// assert!(!profile.hosts.reaches("10.0.0.2:22".parse().unwrap()));
+    /// assert!(!profile.hosts.reaches("10.0.0.3:22".parse().unwrap()));
+    /// ```
+    pub fn reaches(&self, address: SocketAddr) -> bool {
+        self.0.values().any(|tunnel| {
+            tunnel.host.parse::<IpAddr>() == Ok(address.ip())
+                && tunnel.port.is_none_or(|port| port == address.port())
+        })
+    }
+
     /// Whether there are no entries.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()

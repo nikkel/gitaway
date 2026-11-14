@@ -95,6 +95,12 @@ impl ConfigDir {
     pub fn lock_file(&self, name: &ProfileName) -> PathBuf {
         self.root.join("locks").join(format!("{name}.lock"))
     }
+
+    /// The file a running `gitaway tunnel` writes so other commands can use
+    /// its tunnel (see [`super::run_file`]).
+    pub fn run_file(&self, name: &ProfileName) -> PathBuf {
+        self.root.join("runs").join(format!("{name}.toml"))
+    }
 }
 
 #[cfg(test)]
@@ -149,6 +155,10 @@ mod tests {
         assert_eq!(
             dir.key_file(&name),
             Path::new("/home/alice/.config/gitaway/keys/office.key")
+        );
+        assert_eq!(
+            dir.run_file(&name),
+            Path::new("/home/alice/.config/gitaway/runs/office.toml")
         );
     }
 }

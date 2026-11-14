@@ -21,6 +21,12 @@
 //! Only clients that know the random per-command token can use the proxy,
 //! and it only listens on loopback. It stops when the [`Proxy`] is dropped.
 //!
+//! A running `gitaway tunnel` starts a second kind with
+//! [`Proxy::start_shared`]: one for other gitaway processes, which borrow
+//! its tunnel through it (see [`crate::transport::shared`]). That kind only
+//! connects addresses inside the tunnel that its own `[hosts]` lists, and
+//! never connects anything directly.
+//!
 //! - [`socks`]: the SOCKS5 protocol.
 //! - [`helper`]: `gitaway __proxy-connect`, the small program ssh runs to
 //!   reach the proxy.
@@ -62,17 +68,48 @@ pub struct Proxy {
     task: JoinHandle<()>,
 }
 
+/// Who a proxy is for, which decides the requests it accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Serves {
+    /// git and ssh during one command: [`Scope::Any`] and
+    /// [`Scope::HomeOnly`] requests.
+    Git,
+    /// Other gitaway processes borrowing a running `gitaway tunnel`:
+    /// [`Scope::TunnelAddress`] requests only.
+    OtherCommands,
+}
+
 impl Proxy {
-    /// Starts a proxy on `127.0.0.1` with a random port and token. Hosts in
-    /// `hosts` go through `transport`.
+    /// Starts a proxy for git on `127.0.0.1` with a random port and token.
+    /// Hosts in `hosts` go through `transport`.
     pub async fn start(transport: Arc<dyn Transport>, hosts: HostMap) -> io::Result<Self> {
+        Self::start_serving(Serves::Git, transport, hosts).await
+    }
+
+    /// Starts a proxy for other gitaway processes on `127.0.0.1` with a
+    /// random port and token. It only accepts [`Scope::TunnelAddress`]
+    /// requests, for addresses on the tunnel side of `hosts`, and connects
+    /// them through `transport`.
+    pub async fn start_shared(transport: Arc<dyn Transport>, hosts: HostMap) -> io::Result<Self> {
+        Self::start_serving(Serves::OtherCommands, transport, hosts).await
+    }
+
+    async fn start_serving(
+        serves: Serves,
+        transport: Arc<dyn Transport>,
+        hosts: HostMap,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let token = new_token()?;
         let failures = Arc::new(Mutex::new(Vec::new()));
         let task = tokio::spawn(serve(
             listener,
-            Arc::new(Routes { transport, hosts }),
+            Arc::new(Routes {
+                serves,
+                transport,
+                hosts,
+            }),
             token.clone(),
             failures.clone(),
         ));
@@ -95,7 +132,8 @@ impl Proxy {
     }
 
     /// Why connections through the tunnel failed, in order, so gitaway can
-    /// explain a failure that git only reports as a proxy error.
+    /// explain a failure that git only reports as a proxy error. Always
+    /// empty for a [`Proxy::start_shared`] proxy, which may run for days.
     pub fn failures(&self) -> Vec<String> {
         self.failures
             .lock()
@@ -113,6 +151,7 @@ impl Drop for Proxy {
 }
 
 struct Routes {
+    serves: Serves,
     transport: Arc<dyn Transport>,
     hosts: HostMap,
 }
@@ -163,7 +202,9 @@ async fn handle(
     let mut upstream = match open(&routes, &target).await {
         Ok(upstream) => upstream,
         Err((reply, reason)) => {
-            if let Some(reason) = reason {
+            if let Some(reason) = reason
+                && routes.serves == Serves::Git
+            {
                 failures
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -189,21 +230,17 @@ async fn open(
     routes: &Routes,
     target: &Target,
 ) -> Result<Box<dyn crate::transport::Stream>, (Reply, Option<String>)> {
+    match (routes.serves, target.scope) {
+        (Serves::OtherCommands, Scope::TunnelAddress) => {
+            return tunnel_address(routes, target).await;
+        }
+        (Serves::OtherCommands, _) | (Serves::Git, Scope::TunnelAddress) => {
+            return Err((Reply::NotAllowed, None));
+        }
+        (Serves::Git, Scope::Any | Scope::HomeOnly) => {}
+    }
     if let Some(tunnel_address) = routes.hosts.route(&target.host, target.port) {
-        return routes.transport.connect(tunnel_address).await.map_err(|e| {
-            let reply = match &e {
-                TransportError::Timeout { .. } | TransportError::NoHandshake { .. } => {
-                    Reply::TimedOut
-                }
-                TransportError::Connect { source, .. }
-                    if source.kind() == io::ErrorKind::ConnectionRefused =>
-                {
-                    Reply::ConnectionRefused
-                }
-                _ => Reply::GeneralFailure,
-            };
-            (reply, Some(format!("{}:{}: {e}", target.host, target.port)))
-        });
+        return through_tunnel(routes, tunnel_address, target).await;
     }
     if target.scope == Scope::HomeOnly {
         return Err((Reply::NotAllowed, None));
@@ -217,6 +254,43 @@ async fn open(
         Ok(Err(_)) => Err((Reply::HostUnreachable, None)),
         Err(_) => Err((Reply::TimedOut, None)),
     }
+}
+
+/// Connects a [`Scope::TunnelAddress`] request: an IP address on the tunnel
+/// side of `[hosts]`, through the tunnel. Anything else is not allowed.
+async fn tunnel_address(
+    routes: &Routes,
+    target: &Target,
+) -> Result<Box<dyn crate::transport::Stream>, (Reply, Option<String>)> {
+    let address = target
+        .host
+        .parse()
+        .map(|ip| SocketAddr::new(ip, target.port))
+        .ok()
+        .filter(|address| routes.hosts.reaches(*address))
+        .ok_or((Reply::NotAllowed, None))?;
+    through_tunnel(routes, address, target).await
+}
+
+/// Connects to `tunnel_address` through the tunnel, for a request for
+/// `target`.
+async fn through_tunnel(
+    routes: &Routes,
+    tunnel_address: SocketAddr,
+    target: &Target,
+) -> Result<Box<dyn crate::transport::Stream>, (Reply, Option<String>)> {
+    routes.transport.connect(tunnel_address).await.map_err(|e| {
+        let reply = match &e {
+            TransportError::Timeout { .. } | TransportError::NoHandshake { .. } => Reply::TimedOut,
+            TransportError::Connect { source, .. }
+                if source.kind() == io::ErrorKind::ConnectionRefused =>
+            {
+                Reply::ConnectionRefused
+            }
+            _ => Reply::GeneralFailure,
+        };
+        (reply, Some(format!("{}:{}: {e}", target.host, target.port)))
+    })
 }
 
 #[cfg(test)]
@@ -445,6 +519,86 @@ mod tests {
                 transport.asked.lock().unwrap().as_slice(),
                 [SocketAddr::from(([10, 0, 0, 1], tunnel_port))]
             );
+        });
+    }
+
+    /// Asks the proxy at `proxy` for `target`, inside the tunnel. Returns
+    /// the greeting it reads, or the proxy's reply code.
+    fn read_tunnel_address(proxy: SocketAddr, token: &str, target: &str) -> Result<String, u8> {
+        let target = target.parse().unwrap();
+        let mut stream =
+            socks::connect_tunnel_address(proxy, token, target, Duration::from_secs(5)).unwrap()?;
+        let mut text = String::new();
+        stream.read_to_string(&mut text).unwrap();
+        Ok(text)
+    }
+
+    #[test]
+    fn the_shared_proxy_connects_only_addresses_inside_the_tunnel_from_its_hosts() {
+        runtime().block_on(async {
+            let tunnel_port = greeter(b"via tunnel").await;
+            let direct = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            direct.set_nonblocking(true).unwrap();
+            let direct_port = direct.local_addr().unwrap().port();
+            let transport = Arc::new(Loopback {
+                asked: Mutex::new(Vec::new()),
+            });
+            let proxy = Proxy::start_shared(
+                transport.clone(),
+                hosts("\"192.0.2.10\" = \"10.0.0.1\"\n\"127.0.0.1\" = \"10.0.0.2\""),
+            )
+            .await
+            .unwrap();
+            let (address, token) = (proxy.address(), proxy.token().to_owned());
+
+            let listed = tokio::task::spawn_blocking({
+                let token = token.clone();
+                move || read_tunnel_address(address, &token, &format!("10.0.0.1:{tunnel_port}"))
+            });
+            assert_eq!(listed.await.unwrap(), Ok("via tunnel".to_owned()));
+
+            // Not on the tunnel side of [hosts]: refused, the tunnel unused.
+            let unlisted = tokio::task::spawn_blocking({
+                let token = token.clone();
+                move || read_tunnel_address(address, &token, "10.0.0.9:22")
+            });
+            assert_eq!(unlisted.await.unwrap(), Err(Reply::NotAllowed as u8));
+            assert_eq!(transport.asked.lock().unwrap().len(), 1);
+
+            // An ordinary request, for a host it could reach directly, or a
+            // home host by name: neither is something it serves.
+            for host in ["127.0.0.1", "192.0.2.10"] {
+                let token = token.clone();
+                let ordinary = tokio::task::spawn_blocking(move || {
+                    socks::connect(address, &token, host, direct_port).map(|_| ())
+                });
+                assert!(ordinary.await.unwrap().is_err(), "{host}");
+            }
+            let accepted = direct.accept();
+            assert!(
+                matches!(&accepted, Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+                "the shared proxy connected directly: {accepted:?}"
+            );
+            assert_eq!(transport.asked.lock().unwrap().len(), 1);
+            assert!(proxy.failures().is_empty());
+        });
+    }
+
+    #[test]
+    fn the_proxy_for_git_refuses_requests_for_addresses_inside_the_tunnel() {
+        runtime().block_on(async {
+            let transport = Arc::new(Loopback {
+                asked: Mutex::new(Vec::new()),
+            });
+            let proxy = Proxy::start(transport.clone(), hosts("\"192.0.2.10\" = \"10.0.0.1\""))
+                .await
+                .unwrap();
+            let (address, token) = (proxy.address(), proxy.token().to_owned());
+            let result = tokio::task::spawn_blocking(move || {
+                read_tunnel_address(address, &token, "10.0.0.1:22")
+            });
+            assert_eq!(result.await.unwrap(), Err(Reply::NotAllowed as u8));
+            assert!(transport.asked.lock().unwrap().is_empty());
         });
     }
 

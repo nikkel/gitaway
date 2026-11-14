@@ -249,7 +249,8 @@ fn main_page() -> String {
     );
     page.para(
         "Ctrl+C reaches git as usual; gitaway waits for git, closes the tunnel and \
-         exits with git's exit status. Two commands using the same profile take turns.",
+         exits with git's exit status. Two commands using the same profile take turns, \
+         except while gitaway tunnel runs for it: then they use its tunnel.",
     );
 
     page.section("FILES");
@@ -266,6 +267,12 @@ fn main_page() -> String {
         "$XDG_CONFIG_HOME/gitaway/keys/name.key",
         "A profile's device key, only when it isn't kept in the OS keychain. Mode 600; \
          a key file other users can read is refused.",
+    );
+    page.item(
+        "$XDG_CONFIG_HOME/gitaway/runs/name.toml",
+        "Written by a running gitaway tunnel so other commands can use its tunnel: the \
+         address of its proxy on 127.0.0.1 and a random token. Mode 600; removed when \
+         the tunnel stops.",
     );
 
     page.section("ENVIRONMENT");

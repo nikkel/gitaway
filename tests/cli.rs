@@ -1612,6 +1612,57 @@ mod away {
         std::net::TcpListener::bind(("127.0.0.1", local_port)).unwrap();
     }
 
+    /// While `gitaway tunnel` runs, other commands for the profile use its
+    /// tunnel: they don't wait for it, and don't need the device key.
+    #[test]
+    fn commands_borrow_the_running_tunnel() {
+        use std::time::Duration;
+
+        let env = Env::new();
+        let web_port = http_server();
+        away_profile(&env, &[web_port]);
+        set_web_url(&env, &format!("http://192.0.2.10:{web_port}"));
+        let local_port = closed_port();
+        let (mut child, lines) = start_tunnel(&env, local_port);
+        let run_file = env.path("config/gitaway/runs/home.toml");
+        assert!(run_file.exists());
+
+        // Only the running tunnel can still reach the server.
+        std::fs::remove_file(env.key_file("home")).unwrap();
+        env.gitaway()
+            .args([
+                "ls-remote",
+                &format!("http://192.0.2.10:{web_port}/app.git"),
+            ])
+            .timeout(Duration::from_secs(30))
+            .assert()
+            .success()
+            .stderr(predicate::str::contains(
+                "using the running `gitaway tunnel`",
+            ));
+
+        env.gitaway()
+            .args(["tunnel", "home", "--port", &closed_port().to_string()])
+            .timeout(Duration::from_secs(30))
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("already running"));
+
+        #[cfg(unix)]
+        {
+            let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+            rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
+            assert!(child.wait().unwrap().success());
+            assert!(!run_file.exists(), "the runs file is removed on exit");
+        }
+        #[cfg(not(unix))]
+        {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        let _ = lines;
+    }
+
     #[test]
     fn tunnel_without_a_web_address_says_how_to_set_one() {
         let env = Env::new();

@@ -221,7 +221,7 @@ Web address (such as http://192.0.2.10:3000): http://192.0.2.10:3000
 Saved it in profile `home`.
 Tunnel for profile `home` is up.
   http://localhost:3000/  ->  your git server at http://192.0.2.10:3000/
-  Other gitaway commands for `home` wait until it stops.
+  gitaway commands for `home` use this tunnel while it runs.
 Press Ctrl+C to stop.
 ```
 
@@ -229,7 +229,7 @@ Open the `localhost` address in your browser. The web address is asked for once 
 
 - The server still thinks its address is the home one. Clone URLs it shows are the home ones, which is what gitaway uses anyway, and some servers show a warning about the address on their sign-in page. Signing in through another site (OAuth) may not work.
 - An `https://` server's certificate names the server, not `localhost`, so the browser warns about it.
-- While the tunnel runs, other gitaway commands for the same profile wait until it stops.
+- While the tunnel runs, other gitaway commands for the same profile (a push, say) use it instead of opening their own, and say so. A second `gitaway tunnel` for the same profile is refused. If you change the profile's `[hosts]`, restart the tunnel.
 
 ## Configuration
 
@@ -265,6 +265,7 @@ The [configuration reference](docs/configuration.md) covers every setting, how a
 - **On Linux, gitaway can't be inspected while it runs.** It marks itself not dumpable, so no core dump holds the device key and other programs running as you can't attach a debugger or read its memory.
 - **git authentication is unchanged.** gitaway never sees your SSH keys, passwords or tokens. git and ssh handle them as usual.
 - **The tunnel lives inside gitaway, for one command.** No system VPN, network adapter, routes or root. The proxy git talks to listens only on `127.0.0.1` and needs a random token that changes every command. Only the profile's `[hosts]` go through the tunnel; anything else git contacts is connected directly, as git would. Two commands using the same profile take turns, because a WireGuard server keeps one session per device.
+- **A running `gitaway tunnel` lends its tunnel to your other gitaway commands** through a second proxy on `127.0.0.1`. It needs a random token, kept while the tunnel runs in a file only you can read (`~/.config/gitaway/runs/`), and only connects the addresses inside the tunnel that the profile's `[hosts]` lists. Programs running as you could read that token, but they could read the device key too.
 - **`gitaway tunnel` opens a port anyone on this computer can use.** It listens only on `localhost`, never on the network, and only forwards to your git server's web address. But it has no password of its own, so any program or user on this computer can reach the web interface while it runs. The server still asks for its own login. Stop it with Ctrl+C when you're done.
 - **Web pages can't use the tunnel's port.** A malicious site could try to reach `localhost` under its own name ("DNS rebinding") and read what your server shows visitors who aren't signed in. gitaway only forwards requests addressed to `localhost`, `127.0.0.1` or `[::1]` with the tunnel's port, and refuses the rest before anything reaches your server.
 - **Browsers share `localhost` cookies between ports.** After you sign in through the tunnel, your browser also sends that sign-in cookie to any other web app you open on `localhost`, such as a development server. Sign out when you're done if you run other local web apps.

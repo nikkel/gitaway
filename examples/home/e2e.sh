@@ -128,9 +128,18 @@ curl -fs http://localhost:18080/api/healthz | grep -q pass \
 # A web page using its own name for the port (DNS rebinding) is refused.
 status=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example:18080' http://127.0.0.1:18080/api/healthz)
 [ "$status" = 421 ] || fail "gitaway tunnel answered a request for another site's name ($status)"
+# Other commands use the running tunnel instead of waiting for it to stop.
+echo "while the tunnel runs" >ssh-clone/tunnel.txt
+git -C ssh-clone add tunnel.txt
+git -C ssh-clone commit -qm "push while gitaway tunnel runs"
+out=$("$GITAWAY" -C ssh-clone push 2>&1) || { echo "$out" >&2; fail "push during gitaway tunnel failed"; }
+grep -q "using the running" <<<"$out" || { echo "$out" >&2; fail "push didn't use the running tunnel"; }
+out=$("$GITAWAY" -C http-clone pull --ff-only 2>&1) || { echo "$out" >&2; fail "pull during gitaway tunnel failed"; }
+[ -f http-clone/tunnel.txt ] || fail "pull over http didn't bring the commit pushed during the tunnel"
 kill -TERM "$tunnel_pid"
 wait "$tunnel_pid" || fail "gitaway tunnel didn't stop cleanly"
 grep -q "Tunnel closed" "$work/tunnel.log" || fail "gitaway tunnel didn't say it closed"
+[ ! -e "$XDG_CONFIG_HOME/gitaway/runs/home.toml" ] || fail "gitaway tunnel left its runs file behind"
 
 step "Home: with the forge on the local network, commands go directly"
 expect "Tunnel: not tested" "$GITAWAY" setup lan --yes --config "$work/laptop.conf" \

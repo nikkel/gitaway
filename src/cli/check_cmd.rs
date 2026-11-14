@@ -3,7 +3,7 @@
 //!
 //! ```text
 //!  [home].ssh ──[hosts]──▶ address through the tunnel
-//!  take the lock, load the device key, open the tunnel
+//!  open the tunnel (or borrow a running `gitaway tunnel`'s)
 //!  connect to that address ──── fails? ──▶ say which part (no handshake, …)
 //!  SSH key exchange: the server proves its host key
 //!    nothing pinned ──▶ show it, pin it (asks, or --yes)
@@ -33,9 +33,8 @@ use crate::config::store::Store;
 use crate::config::value::HostKey;
 use crate::error::Error;
 use crate::home_check::{self, AwayReason, Timeouts, Verdict};
-use crate::keys::store::DeviceSecrets;
-use crate::transport;
 
+use super::tunnel_access::{self, Source};
 use super::{away, prompt};
 
 /// How long the server may take to prove its key, through the tunnel.
@@ -75,10 +74,10 @@ pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
         return Ok(0);
     }
 
-    let (_lock, secrets) = away::take_tunnel(store, name)?;
+    let (_lock, source) = tunnel_access::for_command(store, name)?;
     let runtime = away::runtime()?;
     let result = runtime.block_on(async {
-        let seen = capture_through_tunnel(name, &profile, &home, target, secrets)
+        let seen = capture_through_tunnel(name, &profile, &home, target, source)
             .await
             .map_err(|error| {
                 Error::msg(format!(
@@ -101,15 +100,9 @@ async fn capture_through_tunnel(
     profile: &Profile,
     home: &Home,
     target: SocketAddr,
-    secrets: DeviceSecrets,
+    source: Source,
 ) -> Result<HostKey, Error> {
-    let transport = transport::open(
-        name.as_str(),
-        profile,
-        secrets,
-        transport::Lifetime::OneCommand,
-    )
-    .await?;
+    let transport = source.open(name, profile).await?;
     let stream = transport.connect(target).await?;
     println!(
         "Tunnel: works. Reached {} through it, at {target}.",

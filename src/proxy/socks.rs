@@ -17,13 +17,17 @@
 //! anything else. `gitaway-home-only` asks for a home host only: if the
 //! target isn't one, the proxy answers "not allowed" and connects nowhere.
 //! The helper uses that to try the name ssh was given before the address it
-//! resolved it to (see [`super::helper`]).
+//! resolved it to (see [`super::helper`]). `gitaway-tunnel` asks for an
+//! address inside the tunnel, as another gitaway process borrowing a running
+//! `gitaway tunnel` does (see [`crate::transport::shared`]).
 //!
 //! [`accept`] runs the server side; [`connect`] and [`connect_home_only`]
-//! are the client side, used by the `__proxy-connect` helper that ssh runs.
+//! are the client side, used by the `__proxy-connect` helper that ssh runs,
+//! and [`connect_tunnel_address`] is the borrowing process's side.
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -43,6 +47,9 @@ pub const USERNAME: &str = "gitaway";
 /// The username for a [`Scope::HomeOnly`] request.
 pub const HOME_ONLY_USERNAME: &str = "gitaway-home-only";
 
+/// The username for a [`Scope::TunnelAddress`] request.
+pub const TUNNEL_USERNAME: &str = "gitaway-tunnel";
+
 /// Which connections a request allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -50,6 +57,10 @@ pub enum Scope {
     Any,
     /// Through the tunnel for a home host; for anything else, nothing.
     HomeOnly,
+    /// An address inside the tunnel (the right-hand side of a `[hosts]`
+    /// entry), connected through the tunnel as it is. Only a running
+    /// `gitaway tunnel`'s proxy for other gitaway processes accepts these.
+    TunnelAddress,
 }
 
 /// Where a client asked to connect.
@@ -71,7 +82,8 @@ pub enum Reply {
     Succeeded = 0,
     /// Something else went wrong.
     GeneralFailure = 1,
-    /// A [`Scope::HomeOnly`] request for a host that isn't a home host.
+    /// A [`Scope::HomeOnly`] request for a host that isn't a home host, or a
+    /// request this proxy doesn't serve.
     NotAllowed = 2,
     /// The target couldn't be reached.
     HostUnreachable = 4,
@@ -155,10 +167,10 @@ where
         return Err(HandshakeError::WrongToken);
     }
     stream.write_all(&[AUTH_VERSION, 0]).await?;
-    let scope = if username == HOME_ONLY_USERNAME.as_bytes() {
-        Scope::HomeOnly
-    } else {
-        Scope::Any
+    let scope = match username.as_slice() {
+        name if name == HOME_ONLY_USERNAME.as_bytes() => Scope::HomeOnly,
+        name if name == TUNNEL_USERNAME.as_bytes() => Scope::TunnelAddress,
+        _ => Scope::Any,
     };
 
     // The request.
@@ -238,6 +250,26 @@ pub fn connect_home_only(
     }
 }
 
+/// Asks for `target`, an address inside the tunnel, as another gitaway
+/// process borrowing a running `gitaway tunnel` does. Gives up if the proxy
+/// hasn't answered within `timeout`. The inner `Err` is the proxy's reply
+/// code when it didn't connect.
+pub fn connect_tunnel_address(
+    proxy: SocketAddr,
+    token: &str,
+    target: SocketAddr,
+    timeout: Duration,
+) -> io::Result<Result<std::net::TcpStream, u8>> {
+    let mut stream = std::net::TcpStream::connect_timeout(&proxy, timeout)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let host = target.ip().to_string();
+    let result = request_on(&mut stream, token, TUNNEL_USERNAME, &host, target.port())?;
+    stream.set_read_timeout(None)?;
+    stream.set_write_timeout(None)?;
+    Ok(result.map(|()| stream))
+}
+
 /// Runs the client side as `username`. The inner `Err` is the proxy's
 /// reply code when it didn't connect.
 fn request(
@@ -247,8 +279,19 @@ fn request(
     host: &str,
     port: u16,
 ) -> io::Result<Result<std::net::TcpStream, u8>> {
-    let protocol = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_owned());
     let mut stream = std::net::TcpStream::connect(proxy)?;
+    Ok(request_on(&mut stream, token, username, host, port)?.map(|()| stream))
+}
+
+/// Runs the client side as `username` on a connection to the proxy.
+fn request_on(
+    stream: &mut std::net::TcpStream,
+    token: &str,
+    username: &str,
+    host: &str,
+    port: u16,
+) -> io::Result<Result<(), u8>> {
+    let protocol = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_owned());
     stream.write_all(&[VERSION, 1, METHOD_PASSWORD])?;
     let mut answer = [0; 2];
     stream.read_exact(&mut answer)?;
@@ -304,7 +347,7 @@ fn request(
     };
     let mut rest = vec![0; address_len + 2];
     stream.read_exact(&mut rest)?;
-    Ok(Ok(stream))
+    Ok(Ok(()))
 }
 
 async fn read_short_string<S: AsyncRead + Unpin>(stream: &mut S) -> io::Result<Vec<u8>> {
@@ -413,6 +456,37 @@ mod tests {
         bytes.extend([5, 1, 0, 3, 3, b'n', b'a', b's', 0, 22]);
         let (target, _) = server_sees(&bytes, "secret");
         assert_eq!(target.unwrap().scope, Scope::HomeOnly);
+    }
+
+    #[test]
+    fn the_tunnel_username_asks_for_an_address_inside_the_tunnel() {
+        runtime().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let target = accept(&mut stream, "secret").await.unwrap();
+                reply(&mut stream, Reply::NotAllowed).await.unwrap();
+                target
+            });
+            let client = tokio::task::spawn_blocking(move || {
+                let target = "10.0.0.1:3000".parse().unwrap();
+                connect_tunnel_address(proxy, "secret", target, Duration::from_secs(5))
+                    .map(|result| result.err())
+            });
+            assert_eq!(
+                client.await.unwrap().unwrap(),
+                Some(Reply::NotAllowed as u8)
+            );
+            assert_eq!(
+                server.await.unwrap(),
+                Target {
+                    host: "10.0.0.1".into(),
+                    port: 3000,
+                    scope: Scope::TunnelAddress,
+                }
+            );
+        });
     }
 
     #[test]
