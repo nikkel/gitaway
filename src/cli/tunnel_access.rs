@@ -9,7 +9,9 @@
 //!  lock free? ─── yes ─▶ delete any runs file (left by a tunnel that was killed)
 //!   │                    load the device key, open this command's own tunnel
 //!   no
-//!  runs file, and its proxy answers? ─── yes ─▶ borrow the running tunnel
+//!  runs file, and its proxy answers? ─── yes ─▶ same VPN settings as the profile now?
+//!   │                                             yes ─▶ borrow the running tunnel
+//!   │                                             no ──▶ error: restart `gitaway tunnel`
 //!   no: a short command holds the lock, or a tunnel is starting
 //!  say "waiting" once, look again in 200 ms
 //! ```
@@ -75,14 +77,26 @@ impl Source {
 /// running `gitaway tunnel`'s, or takes the lock and loads the device key to
 /// open its own, waiting while another command uses it. Hold the lock, if
 /// any, until the tunnel is closed.
+///
+/// A running tunnel opened with VPN settings other than `profile`'s (the
+/// profile changed since it started) is an error: it may lead to another
+/// server.
 pub(crate) fn for_command(
     store: &Store,
     name: &ProfileName,
+    profile: &Profile,
 ) -> Result<(Option<ProfileLock>, Source), Error> {
     match wait_for(store.dir(), name, || note_waiting(name))? {
         Access::Free(lock) => {
             let secrets = load_secrets(store, name)?;
             Ok((Some(lock), Source::Own(secrets)))
+        }
+        Access::Running(run) if run.transport() != profile.transport.settings_text() => {
+            Err(Error::msg(format!(
+                "the running `gitaway tunnel` for profile `{name}` was started before the \
+                 profile's VPN settings changed, so it may lead somewhere else. Restart it: stop \
+                 it with Ctrl+C and run `gitaway tunnel {name}` again"
+            )))
         }
         Access::Running(run) => {
             eprintln!("gitaway: using the running `gitaway tunnel` for profile `{name}`.");
@@ -182,7 +196,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         // Left by a tunnel that was killed; its proxy even still answers.
         std::mem::forget(
-            RunFile::new(listener.local_addr().unwrap(), TOKEN)
+            RunFile::new(listener.local_addr().unwrap(), TOKEN, "wireguard")
                 .publish(&dir(&temp), &name())
                 .unwrap(),
         );
@@ -203,7 +217,7 @@ mod tests {
         let _lock = hold_lock(&temp);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let proxy = listener.local_addr().unwrap();
-        let _published = RunFile::new(proxy, TOKEN)
+        let _published = RunFile::new(proxy, TOKEN, "wireguard")
             .publish(&dir(&temp), &name())
             .unwrap();
         let access = wait_for(&dir(&temp), &name(), || panic!("nothing to wait for")).unwrap();
@@ -211,6 +225,38 @@ mod tests {
             matches!(&access, Access::Running(run) if run.proxy() == proxy),
             "{access:?}"
         );
+    }
+
+    fn profile(mtu: &str) -> Profile {
+        Profile::from_toml(&format!(
+            "[transport.wireguard]\nendpoint = \"vpn.example.net:51820\"\n\
+             server_public_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n{mtu}"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_running_tunnel_with_other_vpn_settings_is_not_borrowed() {
+        let temp = TempDir::new().unwrap();
+        let store = Store::new(dir(&temp));
+        let _lock = hold_lock(&temp);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let started_with = profile("");
+        let _published = RunFile::new(
+            listener.local_addr().unwrap(),
+            TOKEN,
+            &started_with.transport.settings_text(),
+        )
+        .publish(&dir(&temp), &name())
+        .unwrap();
+
+        let (lock, source) = for_command(&store, &name(), &started_with).unwrap();
+        assert!(lock.is_none());
+        assert!(matches!(source, Source::Borrowed(_)));
+
+        let changed = profile("mtu = 1280\n");
+        let error = for_command(&store, &name(), &changed).err().unwrap();
+        assert!(error.to_string().contains("Restart it"), "{error}");
     }
 
     #[test]
@@ -228,7 +274,7 @@ mod tests {
 
         // The lock holder turns out to be a tunnel, which now says where it is.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let _published = RunFile::new(listener.local_addr().unwrap(), TOKEN)
+        let _published = RunFile::new(listener.local_addr().unwrap(), TOKEN, "wireguard")
             .publish(&dir(&temp), &name())
             .unwrap();
         let access = waiter.join().unwrap();

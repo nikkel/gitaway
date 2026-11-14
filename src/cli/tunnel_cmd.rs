@@ -106,9 +106,13 @@ pub fn run(store: &Store, name: &ProfileName, port: Option<&str>) -> Result<i32,
         let lent = Proxy::start_shared(transport.clone(), profile.hosts.clone())
             .await
             .map_err(|e| Error::msg(format!("couldn't start the proxy for other commands: {e}")))?;
-        let run_file = RunFile::new(lent.address(), lent.token())
-            .publish(store.dir(), name)
-            .map_err(|e| Error::msg(format!("couldn't save where the tunnel is: {e}")))?;
+        let run_file = RunFile::new(
+            lent.address(),
+            lent.token(),
+            &profile.transport.settings_text(),
+        )
+        .publish(store.dir(), name)
+        .map_err(|e| Error::msg(format!("couldn't save where the tunnel is: {e}")))?;
         let forwards = start_forwards(listeners, transport, target)?;
         println!(
             "Tunnel for profile `{name}` is up.\n  {local_url}  ->  your git server at {}\n  \

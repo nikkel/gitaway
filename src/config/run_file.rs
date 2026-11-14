@@ -11,7 +11,9 @@
 //! ```
 //!
 //! The file holds the address of the tunnel's proxy for other gitaway
-//! processes and the random token that proxy asks for. It's private (mode
+//! processes, the random token that proxy asks for, and the profile's VPN
+//! settings as the tunnel started with them (no secrets), so a command can
+//! tell when the profile has changed since. It's private (mode
 //! 600 in gitaway's private configuration directory), like the device key
 //! file: a program that can read it could read the device key too.
 //!
@@ -30,13 +32,17 @@ use super::name::ProfileName;
 use super::paths::ConfigDir;
 use super::private_fs::write_atomic;
 
-/// Where a running tunnel's proxy for other gitaway processes is, and the
-/// token it asks for.
+/// Where a running tunnel's proxy for other gitaway processes is, the token
+/// it asks for, and the VPN settings the tunnel was opened with.
 #[derive(Clone)]
 pub struct RunFile {
     proxy: SocketAddr,
     token: Zeroizing<String>,
+    transport: String,
 }
+
+/// The longest VPN settings line accepted from the file.
+const MAX_TRANSPORT_TEXT: usize = 1024;
 
 /// The runs file couldn't be written, read or removed, or isn't valid.
 #[derive(Debug, thiserror::Error)]
@@ -52,14 +58,18 @@ pub struct RunFileError {
 struct Raw {
     proxy: String,
     token: String,
+    transport: String,
 }
 
 impl RunFile {
-    /// A runs file for the proxy at `proxy` (on loopback) asking for `token`.
-    pub fn new(proxy: SocketAddr, token: &str) -> Self {
+    /// A runs file for the proxy at `proxy` (on loopback) asking for `token`,
+    /// for a tunnel opened with `transport`
+    /// ([`crate::config::profile::Transport::settings_text`]).
+    pub fn new(proxy: SocketAddr, token: &str, transport: &str) -> Self {
         Self {
             proxy,
             token: Zeroizing::new(token.to_owned()),
+            transport: transport.to_owned(),
         }
     }
 
@@ -73,15 +83,22 @@ impl RunFile {
         &self.token
     }
 
+    /// The VPN settings the tunnel was opened with.
+    pub fn transport(&self) -> &str {
+        &self.transport
+    }
+
     /// Writes the file for profile `name`. It's removed when the returned
     /// [`Published`] is dropped.
     pub fn publish(&self, dir: &ConfigDir, name: &ProfileName) -> Result<Published, RunFileError> {
         let path = dir.run_file(name);
         let text = Zeroizing::new(format!(
             "# Written by a running `gitaway tunnel`, and removed when it stops.\n\
-             proxy = \"{}\"\ntoken = \"{}\"\n",
+             proxy = \"{}\"\ntoken = \"{}\"\ntransport = {}\n",
             self.proxy,
-            self.token.as_str()
+            self.token.as_str(),
+            // Quoted and escaped as a TOML string.
+            toml::Value::String(self.transport.clone())
         ));
         write_atomic(dir.path(), &path, text.as_bytes()).map_err(|e| error(&path, e))?;
         Ok(Published { path })
@@ -129,7 +146,14 @@ impl RunFile {
         if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("the token isn't 64 hex digits".to_owned());
         }
-        Ok(Self { proxy, token })
+        if raw.transport.is_empty() || raw.transport.len() > MAX_TRANSPORT_TEXT {
+            return Err("the VPN settings are empty or too long".to_owned());
+        }
+        Ok(Self {
+            proxy,
+            token,
+            transport: raw.transport,
+        })
     }
 }
 
@@ -169,6 +193,8 @@ mod tests {
     use tempfile::TempDir;
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    /// With a quote and a backslash, which must survive the round trip.
+    const SETTINGS: &str = r#"wireguard endpoint=vpn.example.net:51820 "x\y""#;
 
     fn dir(temp: &TempDir) -> ConfigDir {
         ConfigDir::new(Some(temp.path().into()), None).unwrap()
@@ -182,13 +208,14 @@ mod tests {
     fn a_published_file_reads_back_and_is_removed_when_dropped() {
         let temp = TempDir::new().unwrap();
         let proxy: SocketAddr = "127.0.0.1:41234".parse().unwrap();
-        let published = RunFile::new(proxy, TOKEN)
+        let published = RunFile::new(proxy, TOKEN, SETTINGS)
             .publish(&dir(&temp), &name())
             .unwrap();
 
         let read = RunFile::read(&dir(&temp), &name()).unwrap().unwrap();
         assert_eq!(read.proxy(), proxy);
         assert_eq!(read.token(), TOKEN);
+        assert_eq!(read.transport(), SETTINGS);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -206,7 +233,7 @@ mod tests {
     #[test]
     fn a_stale_file_is_removed_and_a_missing_one_is_fine() {
         let temp = TempDir::new().unwrap();
-        let published = RunFile::new("127.0.0.1:41234".parse().unwrap(), TOKEN)
+        let published = RunFile::new("127.0.0.1:41234".parse().unwrap(), TOKEN, SETTINGS)
             .publish(&dir(&temp), &name())
             .unwrap();
         // As after a `kill -9`: the file stays.
@@ -221,7 +248,7 @@ mod tests {
         let cases = [
             (
                 "not on this computer",
-                format!("proxy = \"192.0.2.10:1080\"\ntoken = \"{TOKEN}\"\n"),
+                format!("proxy = \"192.0.2.10:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n"),
             ),
             (
                 "short token",
@@ -229,7 +256,10 @@ mod tests {
             ),
             (
                 "unknown field",
-                format!("proxy = \"127.0.0.1:1080\"\ntoken = \"{TOKEN}\"\nhost = \"x\"\n"),
+                format!(
+                    "proxy = \"127.0.0.1:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n\
+                     host = \"x\"\n"
+                ),
             ),
             (
                 "no port",
@@ -240,13 +270,13 @@ mod tests {
         for (what, text) in cases {
             assert!(RunFile::parse(&text).is_err(), "{what}");
         }
-        let v6 = format!("proxy = \"[::1]:1080\"\ntoken = \"{TOKEN}\"\n");
+        let v6 = format!("proxy = \"[::1]:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n");
         assert!(RunFile::parse(&v6).is_ok());
     }
 
     #[test]
     fn debug_output_leaves_the_token_out() {
-        let run = RunFile::new("127.0.0.1:41234".parse().unwrap(), TOKEN);
+        let run = RunFile::new("127.0.0.1:41234".parse().unwrap(), TOKEN, SETTINGS);
         assert!(!format!("{run:?}").contains(TOKEN));
     }
 }
