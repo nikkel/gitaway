@@ -74,7 +74,7 @@ pub fn run(store: &Store, name: &ProfileName, yes: bool) -> Result<i32, Error> {
         return Ok(0);
     }
 
-    let (_lock, source) = tunnel_access::for_command(store, name)?;
+    let (_lock, source) = tunnel_access::for_command(store, name, &profile)?;
     let runtime = away::runtime()?;
     let result = runtime.block_on(async {
         let seen = capture_through_tunnel(name, &profile, &home, target, source)

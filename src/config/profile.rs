@@ -72,6 +72,39 @@ pub enum Transport {
     WireGuard(WireGuard),
 }
 
+impl Transport {
+    /// The settings that decide which server the tunnel reaches and how, as
+    /// one line. Two tunnels with the same line are the same tunnel. Holds no
+    /// secrets: a running `gitaway tunnel` records it so commands can tell
+    /// when the profile has changed since it started.
+    ///
+    /// ```
+    /// use gitaway::config::profile::Profile;
+    ///
+    /// let text = |rest: &str| Profile::from_toml(&format!(
+    ///     "[transport.wireguard]\nendpoint = \"vpn.example.net:51820\"\n\
+    ///      server_public_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n{rest}"
+    /// )).unwrap().transport.settings_text();
+    /// assert_eq!(text(""), text(""));
+    /// assert_ne!(text(""), text("mtu = 1280\n"));
+    /// ```
+    pub fn settings_text(&self) -> String {
+        match self {
+            Self::WireGuard(wireguard) => format!(
+                "wireguard endpoint={} server_public_key={} address={} mtu={}",
+                wireguard.endpoint,
+                wireguard.server_public_key,
+                wireguard
+                    .address
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+                wireguard.mtu.map(|mtu| mtu.to_string()).unwrap_or_default(),
+            ),
+        }
+    }
+}
+
 /// Settings for a WireGuard tunnel. The device's private key isn't here: it
 /// lives in the OS keychain.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]

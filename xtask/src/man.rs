@@ -271,8 +271,8 @@ fn main_page() -> String {
     page.item(
         "$XDG_CONFIG_HOME/gitaway/runs/name.toml",
         "Written by a running gitaway tunnel so other commands can use its tunnel: the \
-         address of its proxy on 127.0.0.1 and a random token. Mode 600; removed when \
-         the tunnel stops.",
+         address of its proxy on 127.0.0.1, a random token and the VPN settings it \
+         started with. Mode 600; removed when the tunnel stops.",
     );
 
     page.section("ENVIRONMENT");

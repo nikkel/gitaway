@@ -142,7 +142,7 @@ mod tests {
     }
 
     fn borrow(proxy: &Proxy) -> SharedTunnel {
-        SharedTunnel::new(RunFile::new(proxy.address(), proxy.token()))
+        SharedTunnel::new(RunFile::new(proxy.address(), proxy.token(), "wireguard"))
     }
 
     #[test]
@@ -192,7 +192,8 @@ mod tests {
         runtime().block_on(async {
             let proxy = running_tunnel().await;
             let target = SocketAddr::from(([10, 0, 0, 1], 22));
-            let guessed = SharedTunnel::new(RunFile::new(proxy.address(), &"0".repeat(64)));
+            let guessed =
+                SharedTunnel::new(RunFile::new(proxy.address(), &"0".repeat(64), "wireguard"));
             assert!(guessed.connect(target).await.is_err());
 
             let stopped = borrow(&proxy);

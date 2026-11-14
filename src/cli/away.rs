@@ -70,7 +70,7 @@ pub fn run(plan: AwayPlan) -> Result<i32, Error> {
 
     let store = super::open_store()?;
     let name = &plan.name;
-    let (_lock, source) = tunnel_access::for_command(&store, name)?;
+    let (_lock, source) = tunnel_access::for_command(&store, name, &plan.profile)?;
 
     let runtime = runtime()?;
     let result = runtime.block_on(async {

@@ -1641,6 +1641,22 @@ mod away {
                 "using the running `gitaway tunnel`",
             ));
 
+        // Once the profile's VPN settings change, the running tunnel may lead
+        // somewhere else, so it isn't used.
+        env.gitaway()
+            .args(["profile", "set", "home", "transport.wireguard.mtu", "1280"])
+            .assert()
+            .success();
+        env.gitaway()
+            .args([
+                "ls-remote",
+                &format!("http://192.0.2.10:{web_port}/app.git"),
+            ])
+            .timeout(Duration::from_secs(30))
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("Restart it"));
+
         env.gitaway()
             .args(["tunnel", "home", "--port", &closed_port().to_string()])
             .timeout(Duration::from_secs(30))
