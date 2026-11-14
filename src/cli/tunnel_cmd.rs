@@ -142,15 +142,26 @@ fn ask_web(store: &Store, name: &ProfileName, profile: &Profile) -> Result<Web, 
             Ok(url)
         },
     )?;
-    store.update_profile(name, |doc| {
-        doc["web"]["url"] = value(url.to_string());
-        Ok(())
-    })?;
+    save_web_url(store, name, &url)?;
     println!("Saved it in profile `{name}`.");
     Ok(Web {
         url,
         local_port: None,
     })
+}
+
+/// Saves `url` as the profile's `[web] url`, in a `[web]` section like the
+/// rest of the file. (Assigning `doc["web"]["url"]` alone would make an
+/// inline `web = { … }` at the top.)
+fn save_web_url(store: &Store, name: &ProfileName, url: &WebUrl) -> Result<(), Error> {
+    store.update_profile(name, |doc| {
+        if !doc.contains_key("web") {
+            doc["web"] = toml_edit::table();
+        }
+        doc["web"]["url"] = value(url.to_string());
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Where the web address is through the tunnel, from the profile's
@@ -322,6 +333,32 @@ mod tests {
             .enable_all()
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn the_web_address_is_saved_as_a_web_section() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let store = Store::new(
+            crate::config::paths::ConfigDir::new(Some(temp.path().into()), None).unwrap(),
+        );
+        let name: ProfileName = "home".parse().unwrap();
+        store
+            .create_profile(
+                &name,
+                "[transport.wireguard]\nendpoint = \"vpn.example.net:51820\"\n\
+                 server_public_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n\n\
+                 [hosts]\n\"192.0.2.10\" = \"10.0.0.1\"\n",
+            )
+            .unwrap();
+        let url: WebUrl = "http://192.0.2.10:3000".parse().unwrap();
+        save_web_url(&store, &name, &url).unwrap();
+
+        let text = std::fs::read_to_string(store.dir().profile_file(&name)).unwrap();
+        assert!(
+            text.ends_with("[web]\nurl = \"http://192.0.2.10:3000/\"\n"),
+            "{text}"
+        );
+        assert_eq!(store.load_profile(&name).unwrap().web.unwrap().url, url);
     }
 
     #[test]
