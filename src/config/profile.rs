@@ -185,9 +185,10 @@ impl HostMap {
         Some(SocketAddr::new(ip, tunnel.port.unwrap_or(port)))
     }
 
-    /// Whether `address` is on the tunnel side of an entry: what
-    /// [`HostMap::route`] could return. A host-only entry covers every port
-    /// of its address.
+    /// Whether `address` is one [`HostMap::route`] can return for some host
+    /// and port. A host-only entry covers every port of its address, except
+    /// the ports an exact `host:port` entry for the same host sends
+    /// elsewhere.
     ///
     /// ```
     /// use gitaway::config::profile::Profile;
@@ -199,16 +200,21 @@ impl HostMap {
     ///     [hosts]
     ///     "192.0.2.10" = "10.0.0.1"
     ///     "192.0.2.20:443" = "10.0.0.2:3000"
+    ///     "192.0.2.10:2222" = "10.0.0.5:22"
     /// "#).unwrap();
     /// assert!(profile.hosts.reaches("10.0.0.1:22".parse().unwrap()));
     /// assert!(profile.hosts.reaches("10.0.0.2:3000".parse().unwrap()));
+    /// // 192.0.2.10:2222 goes to 10.0.0.5:22 instead.
+    /// assert!(!profile.hosts.reaches("10.0.0.1:2222".parse().unwrap()));
     /// assert!(!profile.hosts.reaches("10.0.0.2:22".parse().unwrap()));
     /// assert!(!profile.hosts.reaches("10.0.0.3:22".parse().unwrap()));
     /// ```
     pub fn reaches(&self, address: SocketAddr) -> bool {
-        self.0.values().any(|tunnel| {
-            tunnel.host.parse::<IpAddr>() == Ok(address.ip())
-                && tunnel.port.is_none_or(|port| port == address.port())
+        // A host-only entry keeps the port, so the only port that could
+        // reach `address` through it is `address`'s own.
+        self.0.keys().any(|key| {
+            let port = key.port.unwrap_or(address.port());
+            self.route(&key.host, port) == Some(address)
         })
     }
 
@@ -516,6 +522,44 @@ mod tests {
         assert_eq!(route("2001:db8::10", 22).as_deref(), Some("[fd00::1]:22"));
         assert_eq!(route("github.com", 22), None);
         assert_eq!(route("192.0.2.100", 22), None);
+    }
+
+    /// The tunnel addresses a profile reaches are exactly those `route` can
+    /// return: an exact-port entry hides that port of the host-only entry.
+    #[test]
+    fn hosts_reach_only_addresses_a_route_can_return() {
+        let profile = with_transport(
+            r#"
+            [hosts]
+            "192.0.2.10" = "10.0.0.1"
+            "192.0.2.10:2222" = "10.0.0.5:22"
+            "[2001:db8::10]" = "[fd00::1]"
+            "#,
+        )
+        .unwrap();
+        let reaches = |address: &str| profile.hosts.reaches(address.parse().unwrap());
+
+        assert!(reaches("10.0.0.1:443"));
+        assert!(reaches("10.0.0.5:22"));
+        assert!(reaches("[fd00::1]:22"));
+        assert!(
+            !reaches("10.0.0.1:2222"),
+            "the exact-port entry overrides it"
+        );
+        assert!(!reaches("10.0.0.5:2222"));
+        assert!(!reaches("10.0.0.9:443"));
+
+        // Another host-only entry for the same address still reaches that port.
+        let profile = with_transport(
+            r#"
+            [hosts]
+            "192.0.2.10" = "10.0.0.1"
+            "192.0.2.10:2222" = "10.0.0.5:22"
+            "nas.example.com" = "10.0.0.1"
+            "#,
+        )
+        .unwrap();
+        assert!(profile.hosts.reaches("10.0.0.1:2222".parse().unwrap()));
     }
 
     #[test]

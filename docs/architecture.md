@@ -149,7 +149,7 @@ gitaway push ── lock busy? ── runs/<profile>.toml ──▶ SharedTunnel
 ```
 
 - Once the tunnel works, `gitaway tunnel` starts a second proxy (`Proxy::start_shared`, `src/proxy/mod.rs`) on `127.0.0.1` with its own token, and writes its address and token to `runs/<profile>.toml` (mode 600, `src/config/run_file.rs`). It removes the file when it stops.
-- That proxy only accepts the `gitaway-tunnel` SOCKS scope: an IP address on the tunnel side of its `[hosts]`, connected through its tunnel. Nothing is connected directly, and git's own requests are refused.
+- That proxy only accepts the `gitaway-tunnel` SOCKS scope: an address that its `[hosts]` routes to (`HostMap::reaches`, which follows `route`, so an exact `host:port` entry hides that port of a host-only one), connected through its tunnel. Nothing is connected directly, and git's own requests are refused.
 - Commands get their tunnel from `src/cli/tunnel_access.rs`: lock free → delete any runs file as stale (a killed tunnel releases the lock but leaves the file), open their own; lock busy and a runs file whose proxy answers → use `SharedTunnel` (`src/transport/shared.rs`), a `Transport` over that proxy; otherwise wait and look again every 200 ms. Everything above `Transport` is unchanged.
 - A second `gitaway tunnel` for the profile is refused rather than borrowing, since stopping the first would break it.
 
