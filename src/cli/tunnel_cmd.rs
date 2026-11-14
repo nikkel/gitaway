@@ -15,7 +15,8 @@
 //! The local port is only reachable from this computer, and only ever
 //! forwards to the one web address. It has no login of its own: any program
 //! here can use it while the tunnel runs. The git server still asks for its
-//! own login.
+//! own login. Web pages can't use it under their own name: see
+//! [`super::web_guard`].
 //!
 //! The web interface still believes its address is the home one, so the
 //! clone URLs it shows are the home ones, which is what gitaway commands
@@ -28,8 +29,10 @@
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use tokio::io::AsyncWriteExt;
 use toml_edit::value;
 
 use crate::config::name::ProfileName;
@@ -40,6 +43,7 @@ use crate::error::Error;
 use crate::home_check::{self, Verdict};
 use crate::transport::{self, Lifetime, Transport};
 
+use super::web_guard::{self, Opening};
 use super::{away, prompt};
 
 /// How long to pause after the system refuses a new connection (too many
@@ -247,12 +251,16 @@ fn start_forwards(
 }
 
 /// Accepts connections and copies each one to `target` through the tunnel,
-/// both ways, until the task is stopped.
+/// both ways, until the task is stopped. A connection whose first request
+/// names another site is refused before the tunnel is used (see
+/// [`web_guard`]).
 pub(crate) async fn forward(
     listener: tokio::net::TcpListener,
     transport: Arc<dyn Transport>,
     target: SocketAddr,
 ) {
+    let port = listener.local_addr().map_or(0, |address| address.port());
+    let noted_refusal = Arc::new(AtomicBool::new(false));
     let mut connections = tokio::task::JoinSet::new();
     loop {
         let mut local = match listener.accept().await {
@@ -264,9 +272,28 @@ pub(crate) async fn forward(
             }
         };
         let transport = transport.clone();
+        let noted_refusal = noted_refusal.clone();
         connections.spawn(async move {
+            let opening = match web_guard::read_opening(&mut local, port).await {
+                Opening::Forward(bytes) => bytes,
+                Opening::Refuse => {
+                    let _ = local.write_all(web_guard::refusal(port).as_bytes()).await;
+                    if !noted_refusal.swap(true, Ordering::Relaxed) {
+                        eprintln!(
+                            "gitaway: refused a request on localhost:{port} for another site's \
+                             name. A web page may have tried to reach your git server through \
+                             the tunnel; nothing was sent to it."
+                        );
+                    }
+                    return;
+                }
+                Opening::Drop => return,
+            };
             match transport.connect(target).await {
                 Ok(mut remote) => {
+                    if remote.write_all(&opening).await.is_err() {
+                        return;
+                    }
                     // Either side closing or failing ends the connection;
                     // there's nothing more to report.
                     let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
@@ -379,40 +406,86 @@ mod tests {
         assert!(message.contains("--port"), "{message}");
     }
 
-    #[test]
-    fn connections_are_forwarded_both_ways() {
-        runtime().block_on(async {
-            // The "web server": answers each request with its reverse.
-            let server = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-                .await
-                .unwrap();
-            let target = SocketAddr::from(([10, 0, 0, 1], server.local_addr().unwrap().port()));
-            tokio::spawn(async move {
-                loop {
-                    let (mut stream, _) = server.accept().await.unwrap();
-                    tokio::spawn(async move {
-                        let mut request = [0; 5];
-                        stream.read_exact(&mut request).await.unwrap();
-                        request.reverse();
-                        stream.write_all(&request).await.unwrap();
-                    });
-                }
-            });
+    /// A "web server" on 127.0.0.1 that sends each connection's first
+    /// request head back unchanged, then closes. Returns its port and how
+    /// many connections it has had.
+    async fn echo_server() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let server = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = server.local_addr().unwrap().port();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = count.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = server.accept().await.unwrap();
+                seen.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut buffer = [0; 1024];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut buffer).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => head.extend_from_slice(&buffer[..n]),
+                        }
+                    }
+                    let _ = stream.write_all(&head).await;
+                });
+            }
+        });
+        (port, count)
+    }
 
+    fn request(host: &str) -> Vec<u8> {
+        format!("GET /alice/app HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n\r\n").into_bytes()
+    }
+
+    /// Sends `request` to the forward on `port` and returns everything that
+    /// comes back before it closes.
+    async fn exchange(port: u16, request: &[u8]) -> Vec<u8> {
+        let mut client = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        client.write_all(request).await.unwrap();
+        let mut reply = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut reply))
+            .await
+            .expect("the forward should answer and close")
+            .unwrap();
+        reply
+    }
+
+    #[test]
+    fn requests_for_localhost_are_forwarded_unchanged() {
+        runtime().block_on(async {
+            let (server_port, connections) = echo_server().await;
+            let target = SocketAddr::from(([10, 0, 0, 1], server_port));
             let listeners = listen(0).unwrap();
             let port = listeners[0].local_addr().unwrap().port();
             let _forwards = start_forwards(listeners, Arc::new(Loopback), target).unwrap();
 
-            // Two at once: each connection gets its own way through.
-            for _ in 0..2 {
-                let mut client = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-                    .await
-                    .unwrap();
-                client.write_all(b"hello").await.unwrap();
-                let mut reply = [0; 5];
-                client.read_exact(&mut reply).await.unwrap();
-                assert_eq!(&reply, b"olleh");
+            // Each connection gets its own way through.
+            for host in [format!("localhost:{port}"), format!("127.0.0.1:{port}")] {
+                let request = request(&host);
+                assert_eq!(exchange(port, &request).await, request);
             }
+            assert_eq!(connections.load(Ordering::SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn a_request_for_another_name_is_refused_without_using_the_tunnel() {
+        runtime().block_on(async {
+            let (server_port, connections) = echo_server().await;
+            let target = SocketAddr::from(([10, 0, 0, 1], server_port));
+            let listeners = listen(0).unwrap();
+            let port = listeners[0].local_addr().unwrap().port();
+            let _forwards = start_forwards(listeners, Arc::new(Loopback), target).unwrap();
+
+            let reply = exchange(port, &request(&format!("evil.example:{port}"))).await;
+            let reply = String::from_utf8(reply).unwrap();
+            assert!(reply.starts_with("HTTP/1.1 421 "), "{reply}");
+            assert_eq!(connections.load(Ordering::SeqCst), 0);
         });
     }
 
@@ -429,6 +502,10 @@ mod tests {
             let _forwards = start_forwards(listeners, Arc::new(Loopback), target).unwrap();
 
             let mut client = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap();
+            client
+                .write_all(&request(&format!("localhost:{port}")))
                 .await
                 .unwrap();
             let mut buffer = Vec::new();

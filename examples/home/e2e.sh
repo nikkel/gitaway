@@ -125,6 +125,9 @@ done
 grep -q "is up" "$work/tunnel.log" || { cat "$work/tunnel.log" >&2; fail "the tunnel didn't come up"; }
 curl -fs http://localhost:18080/api/healthz | grep -q pass \
     || { cat "$work/tunnel.log" >&2; fail "the web interface didn't answer through the tunnel"; }
+# A web page using its own name for the port (DNS rebinding) is refused.
+status=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example:18080' http://127.0.0.1:18080/api/healthz)
+[ "$status" = 421 ] || fail "gitaway tunnel answered a request for another site's name ($status)"
 kill -TERM "$tunnel_pid"
 wait "$tunnel_pid" || fail "gitaway tunnel didn't stop cleanly"
 grep -q "Tunnel closed" "$work/tunnel.log" || fail "gitaway tunnel didn't say it closed"

@@ -1584,7 +1584,9 @@ mod away {
         for _ in 0..2 {
             let mut stream = std::net::TcpStream::connect(("127.0.0.1", local_port)).unwrap();
             stream
-                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .write_all(
+                    format!("GET / HTTP/1.1\r\nHost: localhost:{local_port}\r\n\r\n").as_bytes(),
+                )
                 .unwrap();
             let mut response = String::new();
             stream.read_to_string(&mut response).unwrap();

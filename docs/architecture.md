@@ -136,7 +136,8 @@ browser ──▶ 127.0.0.1:<port> / [::1]:<port> ──▶ Transport::connect(w
 - It listens before taking the profile's lock or reading the device key, so a busy port is reported at once. It never picks another port by itself.
 - The tunnel is opened as `Lifetime::LongRunning`, which turns on WireGuard keepalives, so a router doesn't forget a quiet tunnel. One connection is made before it says it's up, so a tunnel that can't work says why at once.
 - It holds the profile's lock until it stops, so other gitaway commands for that profile wait.
-- Each browser connection becomes its own connection through the tunnel, with bytes copied both ways. Nothing is inspected or changed, which is why `https://` works (with a certificate warning) and why the server still sees its own home address as its name.
+- Each browser connection becomes its own connection through the tunnel, with bytes copied both ways. Nothing is changed, which is why `https://` works (with a certificate warning) and why the server still sees its own home address as its name.
+- Before a plain-HTTP connection goes through, `src/cli/web_guard.rs` reads its first request head and checks that `Host` names `localhost`, `127.0.0.1` or `[::1]` with the tunnel's port. Otherwise it answers `421` and closes, so a web page using DNS rebinding can't reach the server. TLS connections pass unchecked: a page under another name fails the certificate check.
 
 ## Code map
 
