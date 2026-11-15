@@ -1,0 +1,33 @@
+# CodeRabbit review settings: https://docs.coderabbit.ai/reference/configuration
+language: en-GB
+reviews:
+  profile: chill
+  # Leave pull request descriptions as their authors wrote them.
+  high_level_summary: false
+  # Keep the walkthrough comment short: what changed, nothing more.
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  poem: false
+  auto_review:
+    drafts: false
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        This repository is public. Example values must be documentation-only:
+        IP addresses from 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 or
+        10.0.0.0/8, host names under example.com or example.net, and user
+        names like alice. Flag anything that looks like a real host name,
+        address, port, key or user name. British spelling is intended.
+    - path: "src/**/*.rs"
+      instructions: >-
+        Every module starts with a //! comment saying what it's for and how
+        to extend it, and every public item has /// docs. Comments explain
+        why, not what. Secrets (device keys, tokens) must never reach logs,
+        output, error messages, command lines or the environment.
+chat:
+  art: false
