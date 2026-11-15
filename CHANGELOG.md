@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format is based on 
 
 - `list` is no longer reserved: the planned command that listed your repositories through the git server's API is dropped, since it needed an API token on every device. `gitaway list` now goes to git, so a git alias named `list` works. `gitaway tunnel` lets you use the git server's own web interface instead.
 
+### Fixed
+
+- The man pages in release archives and Homebrew said "gitaway 0.0.0" at the foot of each page; they now show gitaway's real version.
+
 ## [0.1.1] - 2026-11-13
 
 The first release with prebuilt binaries. Changes since 0.1.0:
