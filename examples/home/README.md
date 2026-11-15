@@ -22,6 +22,7 @@ $ examples/home/e2e.sh
 It starts the containers, creates a user and repository, and sets gitaway up the way a user would: the WireGuard server makes a config for the device (`new-device.sh`), and `gitaway setup` turns it into a profile, finding Forgejo through the tunnel and pinning its host key. Then it:
 
 - clones, pushes and pulls over `ssh://` and `http://` through the tunnel, with ssh checking the forge against the key gitaway pinned;
+- runs `gitaway tunnel` and loads Forgejo's web interface on `localhost`, checks that a request for another site's name is refused, pushes and pulls while it runs (using its tunnel), and checks it stops cleanly;
 - sets up a second profile at "home" (`127.0.0.1`), where `setup` finds Forgejo directly, and checks that commands there connect directly, without the tunnel;
 - restarts the server and checks it still knows the device;
 - removes the device from the server and checks that the error says the VPN server never answered.

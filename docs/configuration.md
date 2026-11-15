@@ -12,9 +12,15 @@ All values on this page are documentation examples. Use your own.
 ├── profiles/
 │   ├── home.toml             one file per profile
 │   └── office.toml
-└── keys/                     device keys, only where there's no OS keychain
-    └── home.key
+├── keys/                     device keys, only where there's no OS keychain
+│   └── home.key
+├── locks/                    one lock per profile, so only one process opens its tunnel
+│   └── home.lock
+└── runs/                     only while `gitaway tunnel` runs: where other commands
+    └── home.toml             find its tunnel (proxy address, token, VPN settings)
 ```
+
+gitaway manages `locks/` and `runs/` itself; don't edit them. A runs file left behind by a tunnel that was killed is removed by the next command for that profile.
 
 The same location is used on Linux, macOS and Windows. On Linux and macOS, gitaway writes files with mode 600 in directories with mode 700, and makes the `gitaway` directory 700 if something else created it with looser permissions. It replaces a file in one step, so an interrupted write never leaves half a file.
 
