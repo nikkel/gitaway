@@ -20,7 +20,7 @@ All values on this page are documentation examples. Use your own.
     └── home.toml             find its tunnel (proxy address, token, VPN settings)
 ```
 
-gitaway manages `locks/` and `runs/` itself; don't edit them. A runs file left behind by a tunnel that was killed is removed by the next command for that profile.
+gitaway manages `locks/` and `runs/` itself; don't edit them. A runs file left behind by a tunnel that was killed is removed the next time a command opens that profile's tunnel: `gitaway tunnel`, or `gitaway check` or a git command away from home.
 
 The same location is used on Linux, macOS and Windows. On Linux and macOS, gitaway writes files with mode 600 in directories with mode 700, and makes the `gitaway` directory 700 if something else created it with looser permissions. It replaces a file in one step, so an interrupted write never leaves half a file.
 
