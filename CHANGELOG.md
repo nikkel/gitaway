@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+Adds `gitaway tunnel`, for your git server's web interface away from home. Upgrade every copy of gitaway on a computer together: an older gitaway waits for a running `gitaway tunnel` to stop instead of using its tunnel. Changes since 0.1.1:
+
 ### Added
 
 - A Homebrew tap: `brew install nikkel/tap/gitaway` installs the prebuilt binary, the `git-away` command and the man pages on macOS and Linux. It follows each new release within a day.
@@ -85,7 +89,8 @@ A pre-release for testing. It isn't installed unless asked for by version, and i
 - Documentation: a README with a quick start and security model, a configuration reference and an architecture guide.
 - Project scaffolding: crate layout, CI (format, lint, test, MSRV and secret scan), contributing guide and security policy.
 
-[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/nikkel/gitaway/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nikkel/gitaway/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/nikkel/gitaway/compare/v0.1.0...v0.1.1
 [0.1.1-rc.1]: https://github.com/nikkel/gitaway/compare/v0.1.0...v0.1.1-rc.1
 [0.1.0]: https://github.com/nikkel/gitaway/compare/v0.1.0-alpha.1...v0.1.0
