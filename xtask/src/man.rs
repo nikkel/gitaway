@@ -92,7 +92,7 @@ fn add_command_pages(
         add_command_pages(sub, pages)?;
     }
     let man = clap_mangen::Man::new(command.clone())
-        .source(format!("gitaway {}", env!("CARGO_PKG_VERSION")))
+        .source(source())
         .manual("gitaway manual");
     let mut out = Vec::new();
     man.render(&mut out).map_err(|e| e.to_string())?;
@@ -101,19 +101,22 @@ fn add_command_pages(
     Ok(())
 }
 
+/// The "source" shown at the foot of every page: gitaway and its version.
+/// The version comes from gitaway's own command definition, because
+/// `CARGO_PKG_VERSION` here would be the xtask crate's.
+fn source() -> String {
+    let version = Cli::command()
+        .get_version()
+        .expect("gitaway's command line has a version")
+        .to_owned();
+    format!("gitaway {version}")
+}
+
 /// `gitaway.1`.
 fn main_page() -> String {
     let mut page = Page::default();
-    page.roff.control(
-        "TH",
-        [
-            "GITAWAY",
-            "1",
-            "",
-            &format!("gitaway {}", env!("CARGO_PKG_VERSION")),
-            "gitaway manual",
-        ],
-    );
+    page.roff
+        .control("TH", ["GITAWAY", "1", "", &source(), "gitaway manual"]);
 
     page.section("NAME");
     page.text("gitaway, git-away - reach your self-hosted git server from anywhere");
@@ -395,6 +398,24 @@ mod tests {
             assert!(pages.contains_key(name), "{name} missing");
         }
         assert_eq!(pages["gitaway.1"], pages["git-away.1"]);
+    }
+
+    /// The xtask crate has a version of its own (0.0.0); pages must show
+    /// gitaway's.
+    #[test]
+    fn every_page_shows_gitaways_version() {
+        let version = Cli::command().get_version().unwrap().to_owned();
+        assert_ne!(
+            version,
+            env!("CARGO_PKG_VERSION"),
+            "the xtask's own version"
+        );
+        for (name, page) in render_all().unwrap() {
+            assert!(
+                page.contains(&format!("\"gitaway {version}\"")),
+                "{name} doesn't show gitaway {version}"
+            );
+        }
     }
 
     #[test]
