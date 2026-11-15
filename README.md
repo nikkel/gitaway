@@ -10,7 +10,7 @@
 
 Reach your self-hosted git server from anywhere. At home, `gitaway` connects directly. Away from home, it opens a VPN tunnel that only gitaway itself uses: no system-wide VPN, no virtual network adapter, no root.
 
-> **Status:** early development. 0.1.0 is the first release, after security, functionality and runtime reviews. Working today: guided setup from your server's WireGuard config, profiles, the home check, and the WireGuard tunnel away from home for `ssh://` and `https://` remotes. Coming in the next release: `gitaway tunnel`, for your git server's web interface away from home.
+> **Status:** early development. Each release follows security, functionality and runtime reviews; 0.2.0 is the latest. Working today: guided setup from your server's WireGuard config, profiles, the home check, the WireGuard tunnel away from home for `ssh://` and `https://` remotes, and `gitaway tunnel`, for your git server's web interface away from home.
 
 ## Why
 
@@ -73,7 +73,7 @@ Both put `gitaway` and `git-away` in `~/.local/bin` (`%USERPROFILE%\.local\bin` 
 
 ```console
 $ gh attestation verify gitaway-x86_64-unknown-linux-musl.tar.xz \
-    --repo nikkel/gitaway --source-ref refs/tags/v0.1.1
+    --repo nikkel/gitaway --source-ref refs/tags/v0.2.0
 ```
 
 Replace the file name and the version. Keep `--source-ref`: without it, the check also accepts files built from an unreleased branch.
