@@ -449,6 +449,18 @@ mod tests {
         }
     }
 
+    /// A tunnel whose connections fail for a reason other than a refusal.
+    struct Resets;
+
+    impl Transport for Resets {
+        fn connect(&self, target: SocketAddr) -> ConnectFuture<'_> {
+            Box::pin(async move {
+                let source = io::ErrorKind::ConnectionReset.into();
+                Err(TransportError::Connect { target, source })
+            })
+        }
+    }
+
     /// The `[hosts]` host is reachable directly here (it's 127.0.0.1), so a
     /// fallback to a direct connection would succeed. It must not happen:
     /// away from home, that address may be someone else's machine.
@@ -581,6 +593,94 @@ mod tests {
             );
             assert_eq!(transport.asked.lock().unwrap().len(), 1);
             assert!(proxy.failures().is_empty());
+        });
+    }
+
+    /// A port with nothing listening on 127.0.0.1.
+    async fn closed_port() -> u16 {
+        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        closed.local_addr().unwrap().port()
+    }
+
+    /// The reply code says why a connection failed. A borrowing gitaway
+    /// process tells "the git server refused" (5) from a tunnel problem by
+    /// it, and git and ssh show it.
+    #[test]
+    fn failures_get_the_reply_code_for_their_cause() {
+        runtime().block_on(async {
+            let port = closed_port().await;
+            let tunnel_hosts = || hosts("\"192.0.2.10\" = \"10.0.0.1\"");
+            let target = format!("10.0.0.1:{port}");
+
+            let refusing = Proxy::start_shared(
+                Arc::new(Loopback {
+                    asked: Mutex::new(Vec::new()),
+                }),
+                tunnel_hosts(),
+            )
+            .await
+            .unwrap();
+            let (address, token) = (refusing.address(), refusing.token().to_owned());
+            let refused = tokio::task::spawn_blocking({
+                let target = target.clone();
+                move || read_tunnel_address(address, &token, &target)
+            });
+            assert_eq!(refused.await.unwrap(), Err(Reply::ConnectionRefused as u8));
+
+            let silent = Proxy::start_shared(Arc::new(Broken), tunnel_hosts())
+                .await
+                .unwrap();
+            let (address, token) = (silent.address(), silent.token().to_owned());
+            let timed_out =
+                tokio::task::spawn_blocking(move || read_tunnel_address(address, &token, &target));
+            assert_eq!(timed_out.await.unwrap(), Err(Reply::TimedOut as u8));
+
+            // Direct, for a host outside [hosts].
+            let direct = Proxy::start(Arc::new(Broken), tunnel_hosts())
+                .await
+                .unwrap();
+            let (address, token) = (direct.address(), direct.token().to_owned());
+            let refused_directly = tokio::task::spawn_blocking(move || {
+                socks::connect(address, &token, "127.0.0.1", port).map(|_| ())
+            });
+            let error = refused_directly.await.unwrap().unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                Reply::describe(Reply::ConnectionRefused as u8)
+            );
+        });
+    }
+
+    /// Only a refusal is reported as one: anything else would send a
+    /// borrowing process, or the user, looking at the git server for a
+    /// problem elsewhere.
+    #[test]
+    fn other_failures_are_not_called_refusals() {
+        runtime().block_on(async {
+            let tunnel_hosts = || hosts("\"192.0.2.10\" = \"10.0.0.1\"");
+            let resetting = Proxy::start_shared(Arc::new(Resets), tunnel_hosts())
+                .await
+                .unwrap();
+            let (address, token) = (resetting.address(), resetting.token().to_owned());
+            let reset = tokio::task::spawn_blocking(move || {
+                read_tunnel_address(address, &token, "10.0.0.1:22")
+            });
+            let code = reset.await.unwrap().unwrap_err();
+            assert_ne!(code, Reply::ConnectionRefused as u8);
+
+            // Direct, to the broadcast address: no TCP connection is possible.
+            let direct = Proxy::start(Arc::new(Broken), tunnel_hosts())
+                .await
+                .unwrap();
+            let (address, token) = (direct.address(), direct.token().to_owned());
+            let unreachable = tokio::task::spawn_blocking(move || {
+                socks::connect(address, &token, "255.255.255.255", 22).map(|_| ())
+            });
+            let error = unreachable.await.unwrap().unwrap_err();
+            assert_ne!(
+                error.to_string(),
+                Reply::describe(Reply::ConnectionRefused as u8)
+            );
         });
     }
 
