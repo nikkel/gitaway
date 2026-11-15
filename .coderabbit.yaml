@@ -22,7 +22,10 @@ reviews:
         IP addresses from 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 or
         10.0.0.0/8, host names under example.com or example.net, and user
         names like alice. Flag anything that looks like a real host name,
-        address, port, key or user name. British spelling is intended.
+        address, port, key or user name. The project's own repository, Homebrew
+        tap and crate names (in URLs, install commands and attestation
+        examples) are real on purpose, so don't flag them. British spelling is
+        intended.
     - path: "src/**/*.rs"
       instructions: >-
         Every module starts with a //! comment saying what it's for and how
