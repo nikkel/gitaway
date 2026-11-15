@@ -608,37 +608,33 @@ mod tests {
     #[test]
     fn failures_get_the_reply_code_for_their_cause() {
         runtime().block_on(async {
-            let port = closed_port().await;
             let tunnel_hosts = || hosts("\"192.0.2.10\" = \"10.0.0.1\"");
-            let target = format!("10.0.0.1:{port}");
-
-            let refusing = Proxy::start_shared(
-                Arc::new(Loopback {
-                    asked: Mutex::new(Vec::new()),
-                }),
-                tunnel_hosts(),
-            )
-            .await
-            .unwrap();
-            let (address, token) = (refusing.address(), refusing.token().to_owned());
-            let refused = tokio::task::spawn_blocking({
-                let target = target.clone();
-                move || read_tunnel_address(address, &token, &target)
+            let loopback = Arc::new(Loopback {
+                asked: Mutex::new(Vec::new()),
             });
-            assert_eq!(refused.await.unwrap(), Err(Reply::ConnectionRefused as u8));
-
+            let refusing = Proxy::start_shared(loopback, tunnel_hosts()).await.unwrap();
             let silent = Proxy::start_shared(Arc::new(Broken), tunnel_hosts())
                 .await
                 .unwrap();
-            let (address, token) = (silent.address(), silent.token().to_owned());
-            let timed_out =
-                tokio::task::spawn_blocking(move || read_tunnel_address(address, &token, &target));
-            assert_eq!(timed_out.await.unwrap(), Err(Reply::TimedOut as u8));
-
-            // Direct, for a host outside [hosts].
             let direct = Proxy::start(Arc::new(Broken), tunnel_hosts())
                 .await
                 .unwrap();
+            // Taken last, so no listener above can be given the freed port.
+            let port = closed_port().await;
+
+            let (address, token) = (refusing.address(), refusing.token().to_owned());
+            let refused = tokio::task::spawn_blocking(move || {
+                read_tunnel_address(address, &token, &format!("10.0.0.1:{port}"))
+            });
+            assert_eq!(refused.await.unwrap(), Err(Reply::ConnectionRefused as u8));
+
+            let (address, token) = (silent.address(), silent.token().to_owned());
+            let timed_out = tokio::task::spawn_blocking(move || {
+                read_tunnel_address(address, &token, "10.0.0.1:22")
+            });
+            assert_eq!(timed_out.await.unwrap(), Err(Reply::TimedOut as u8));
+
+            // Direct, for a host outside [hosts].
             let (address, token) = (direct.address(), direct.token().to_owned());
             let refused_directly = tokio::task::spawn_blocking(move || {
                 socks::connect(address, &token, "127.0.0.1", port).map(|_| ())
