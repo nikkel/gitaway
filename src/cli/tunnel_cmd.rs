@@ -31,6 +31,7 @@
 //! second loopback proxy that only gitaway uses (see
 //! [`crate::config::run_file`] and [`crate::transport::shared`]).
 
+use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -283,34 +284,30 @@ fn start_forwards(
     Ok(forwards)
 }
 
-/// Which failure to reach the git server was last said, so a browser's
-/// retries don't repeat it: one line per outage, not one per request.
+/// The failures to reach the git server said since a connection last got
+/// through, so a browser's retries don't repeat them: one line per reason
+/// per outage, not one per request.
 #[derive(Debug, Default)]
 struct Failures {
-    last_said: Mutex<Option<String>>,
+    said: Mutex<HashSet<String>>,
 }
 
 impl Failures {
-    /// Records a failure, and returns it if it should be said: unless it's
-    /// the one last said and no connection has got through since.
+    /// Records a failure, and returns it if it should be said: unless it
+    /// has been said since a connection last got through.
     fn failed(&self, message: String) -> Option<String> {
-        let mut last_said = self
-            .last_said
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if last_said.as_ref() == Some(&message) {
-            return None;
-        }
-        *last_said = Some(message.clone());
-        Some(message)
+        self.said().insert(message.clone()).then_some(message)
     }
 
-    /// Records a connection that got through, so the next failure is said.
+    /// Records a connection that got through, so failures are said again.
     fn reached(&self) {
-        *self
-            .last_said
+        self.said().clear();
+    }
+
+    fn said(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.said
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -478,9 +475,10 @@ mod tests {
 
         assert_eq!(failures.failed(timeout()), Some(timeout()));
         assert_eq!(failures.failed(timeout()), None);
-        // A different reason is news.
+        // A different reason is news, but not one already said.
         assert_eq!(failures.failed(silent()), Some(silent()));
         assert_eq!(failures.failed(silent()), None);
+        assert_eq!(failures.failed(timeout()), None);
         // Once a connection gets through, the next outage is said again.
         failures.reached();
         assert_eq!(failures.failed(silent()), Some(silent()));
