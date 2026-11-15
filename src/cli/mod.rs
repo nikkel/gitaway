@@ -41,6 +41,7 @@ pub mod setup_cmd;
 pub mod tunnel_access;
 pub mod tunnel_cmd;
 pub mod use_cmd;
+pub mod watchdog;
 pub mod web_guard;
 
 use std::ffi::OsString;

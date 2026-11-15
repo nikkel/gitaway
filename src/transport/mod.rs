@@ -56,11 +56,38 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
 pub type ConnectFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn Stream>, TransportError>> + Send + 'a>>;
 
+/// The future returned by [`Transport::last_handshake`].
+pub type HandshakeFuture<'a> = Pin<Box<dyn Future<Output = Option<Duration>> + Send + 'a>>;
+
+/// The future returned by [`Transport::find_server_again`].
+pub type FindServerFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<SocketAddr>, TransportError>> + Send + 'a>>;
+
 /// An open tunnel that can make TCP connections to the home network.
+///
+/// Only [`Transport::connect`] is required. The other methods help a tunnel
+/// kept open for a long time (`gitaway tunnel`) notice and recover from a
+/// lost connection; their defaults suit a transport that can't tell.
 pub trait Transport: Send + Sync {
     /// Opens a TCP connection to `target`, an address as seen from inside
     /// the home network (the right-hand side of a `[hosts]` entry).
     fn connect(&self, target: SocketAddr) -> ConnectFuture<'_>;
+
+    /// How long ago the VPN server last proved it's there (for WireGuard,
+    /// completed a handshake), or `None` if the tunnel has no working
+    /// session right now. The default, for a transport that can't tell, is
+    /// "just now".
+    fn last_handshake(&self) -> HandshakeFuture<'_> {
+        Box::pin(async { Some(Duration::ZERO) })
+    }
+
+    /// Looks the VPN server's name up again, and uses the address it now
+    /// has: a home connection's public address can change, and a dynamic
+    /// DNS name follows it. Returns the new address if it changed. The
+    /// default does nothing.
+    fn find_server_again(&self) -> FindServerFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 /// The tunnel couldn't be opened, or a connection through it failed.
