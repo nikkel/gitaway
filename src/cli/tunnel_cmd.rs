@@ -33,8 +33,8 @@
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
@@ -269,22 +269,61 @@ fn start_forwards(
     target: SocketAddr,
 ) -> Result<tokio::task::JoinSet<()>, Error> {
     let mut forwards = tokio::task::JoinSet::new();
+    let failures = Arc::new(Failures::default());
     for listener in listeners {
         let listener = tokio::net::TcpListener::from_std(listener)
             .map_err(|e| Error::msg(format!("couldn't listen on this computer: {e}")))?;
-        forwards.spawn(forward(listener, transport.clone(), target));
+        forwards.spawn(forward(
+            listener,
+            transport.clone(),
+            target,
+            failures.clone(),
+        ));
     }
     Ok(forwards)
+}
+
+/// Which failure to reach the git server was last said, so a browser's
+/// retries don't repeat it: one line per outage, not one per request.
+#[derive(Debug, Default)]
+struct Failures {
+    last_said: Mutex<Option<String>>,
+}
+
+impl Failures {
+    /// Records a failure, and returns it if it should be said: unless it's
+    /// the one last said and no connection has got through since.
+    fn failed(&self, message: String) -> Option<String> {
+        let mut last_said = self
+            .last_said
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last_said.as_ref() == Some(&message) {
+            return None;
+        }
+        *last_said = Some(message.clone());
+        Some(message)
+    }
+
+    /// Records a connection that got through, so the next failure is said.
+    fn reached(&self) {
+        *self
+            .last_said
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
 }
 
 /// Accepts connections and copies each one to `target` through the tunnel,
 /// both ways, until the task is stopped. A connection whose first request
 /// names another site is refused before the tunnel is used (see
-/// [`web_guard`]).
-pub(crate) async fn forward(
+/// [`web_guard`]). A failure to reach `target` is said once, until a
+/// connection gets through (see [`Failures`]).
+async fn forward(
     listener: tokio::net::TcpListener,
     transport: Arc<dyn Transport>,
     target: SocketAddr,
+    failures: Arc<Failures>,
 ) {
     let port = listener.local_addr().map_or(0, |address| address.port());
     let noted_refusal = Arc::new(AtomicBool::new(false));
@@ -300,6 +339,7 @@ pub(crate) async fn forward(
         };
         let transport = transport.clone();
         let noted_refusal = noted_refusal.clone();
+        let failures = failures.clone();
         connections.spawn(async move {
             let opening = match web_guard::read_opening(&mut local, port).await {
                 Opening::Forward(bytes) => bytes,
@@ -318,6 +358,7 @@ pub(crate) async fn forward(
             };
             match transport.connect(target).await {
                 Ok(mut remote) => {
+                    failures.reached();
                     if remote.write_all(&opening).await.is_err() {
                         return;
                     }
@@ -325,7 +366,11 @@ pub(crate) async fn forward(
                     // there's nothing more to report.
                     let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
                 }
-                Err(e) => eprintln!("gitaway: couldn't reach your git server: {e}"),
+                Err(e) => {
+                    if let Some(message) = failures.failed(e.to_string()) {
+                        eprintln!("gitaway: couldn't reach your git server: {message}");
+                    }
+                }
             }
         });
         // Forget connections that have finished.
@@ -421,6 +466,24 @@ mod tests {
         for bad in ["0", "65536", "-1", "http", ""] {
             assert!(parse_port(bad).is_err(), "{bad}");
         }
+    }
+
+    /// A browser retries a page that won't load, so an outage would print
+    /// the same line for every retry.
+    #[test]
+    fn a_failure_is_said_once_until_a_connection_gets_through() {
+        let failures = Failures::default();
+        let timeout = || "10.0.0.1:3000 didn't answer".to_owned();
+        let silent = || "no answer from the VPN server".to_owned();
+
+        assert_eq!(failures.failed(timeout()), Some(timeout()));
+        assert_eq!(failures.failed(timeout()), None);
+        // A different reason is news.
+        assert_eq!(failures.failed(silent()), Some(silent()));
+        assert_eq!(failures.failed(silent()), None);
+        // Once a connection gets through, the next outage is said again.
+        failures.reached();
+        assert_eq!(failures.failed(silent()), Some(silent()));
     }
 
     #[test]
