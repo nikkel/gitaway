@@ -90,6 +90,7 @@ pub fn rotate(
     if keeps_preshared {
         eprintln!("\nThe profile's preshared key was kept: the server's entry needs it too.");
     }
+    note_running_tunnel(store, name);
     Ok(0)
 }
 
@@ -153,7 +154,30 @@ pub fn import(
         keys.location(name)
     );
     print_peer_block(name, &profile, &public_key);
+    note_running_tunnel(store, name);
     Ok(0)
+}
+
+/// Says to restart the profile's `gitaway tunnel` if one is running: it
+/// keeps the key it started with, and commands borrow it, so nothing else
+/// would notice the change until the server drops the old key.
+fn note_running_tunnel(store: &crate::config::store::Store, name: &ProfileName) {
+    let restart = format!(
+        "Restart it once the server has the new key: stop it with Ctrl+C and run `gitaway \
+         tunnel {name}` again."
+    );
+    // The key is saved by now; failing to look for a tunnel mustn't fail
+    // the command.
+    match super::tunnel_access::running(store.dir(), name) {
+        Ok(Some(_)) => {
+            eprintln!("\n`gitaway tunnel` is running for `{name}` with the old key. {restart}")
+        }
+        Ok(None) => {}
+        Err(e) => eprintln!(
+            "\ngitaway: couldn't check whether `gitaway tunnel` is running for `{name}`: {e}. \
+             If it is, it still has the old key. {restart}"
+        ),
+    }
 }
 
 /// Reads the key from stdin: pasted at a hidden prompt in a terminal, or

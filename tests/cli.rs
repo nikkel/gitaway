@@ -381,6 +381,54 @@ mod profiles {
             .stderr(predicate::str::contains("already exists"));
     }
 
+    /// A secret pasted into a profile by mistake (a VPN config's
+    /// `PrivateKey` line, a password in the web address) must not be quoted
+    /// back by the error that every command then shows.
+    #[test]
+    fn profile_errors_never_quote_the_file() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let file = env.path("config/gitaway/profiles/home.toml");
+        let good = std::fs::read_to_string(&file).unwrap();
+        // Made up: base64 for "secret-key-do-not-print-this-000".
+        let secret = "c2VjcmV0LWtleS1kby1ub3QtcHJpbnQtdGhpcy0wMDA="; // gitleaks:allow
+        let quiet =
+            || predicate::str::contains("line ").and(predicate::str::contains(secret).not());
+        let unknown_field = good.replace(
+            "[transport.wireguard]\n",
+            &format!("[transport.wireguard]\nPrivateKey = \"{secret}\"\n"),
+        );
+        let password = format!("{good}\n[web]\nurl = \"http://alice:{secret}@192.0.2.10:3000\"\n");
+        let not_toml = format!("{good}\nPrivateKey = {secret}\n");
+        for text in [&unknown_field, &password, &not_toml] {
+            std::fs::write(&file, text).unwrap();
+            env.gitaway()
+                .args(["profile", "list"])
+                .assert()
+                .code(1)
+                .stderr(quiet());
+        }
+        // Editing a file that doesn't parse.
+        env.gitaway()
+            .args(["profile", "set", "home", "transport.wireguard.mtu", "1400"])
+            .assert()
+            .code(1)
+            .stderr(quiet());
+
+        std::fs::write(&file, &good).unwrap();
+        env.gitaway()
+            .args([
+                "profile",
+                "set",
+                "home",
+                "transport.wireguard.private_key",
+                secret,
+            ])
+            .assert()
+            .code(1)
+            .stderr(quiet());
+    }
+
     #[test]
     fn set_validates_before_saving() {
         let env = Env::new();
@@ -1021,6 +1069,53 @@ mod keys {
             .success()
             .stderr(predicate::str::contains("Created the device key"));
         assert!(env.key_file("home").exists());
+    }
+
+    /// A running `gitaway tunnel` keeps the key it started with, so a new
+    /// key needs it restarted, and nothing else would say so.
+    #[test]
+    fn a_new_key_says_to_restart_a_running_tunnel() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let restart = || predicate::str::contains("gitaway tunnel home");
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(restart().not());
+
+        // What a running tunnel leaves: its runs file, and a proxy that
+        // accepts connections.
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        std::fs::create_dir_all(env.path("config/gitaway/runs")).unwrap();
+        std::fs::write(
+            env.path("config/gitaway/runs/home.toml"),
+            format!(
+                "proxy = \"{}\"\ntoken = \"{}\"\ntransport = \"wireguard\"\n",
+                proxy.local_addr().unwrap(),
+                "0".repeat(64)
+            ),
+        )
+        .unwrap();
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(restart());
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(IMPORTED_PRIVATE)
+            .assert()
+            .success()
+            .stderr(restart());
+
+        // A runs file gitaway can't read: say so rather than nothing.
+        std::fs::write(env.path("config/gitaway/runs/home.toml"), "not a runs file").unwrap();
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("couldn't check").and(restart()));
     }
 
     /// RFC 7748 section 6.1: Alice's private and public keys.

@@ -230,7 +230,7 @@ fn apply_edit(
         text.parse()
             .map_err(|e: toml_edit::TomlError| StoreError::Parse {
                 path: path.to_owned(),
-                source: ParseError::Invalid(e.to_string()),
+                source: ParseError::at(text, e.span(), e.message()),
             })?;
     edit(&mut doc).map_err(|e| StoreError::InvalidEdit(ParseError::Invalid(e)))?;
     Ok(doc.to_string())

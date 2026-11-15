@@ -60,6 +60,10 @@ const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// [`SERVER_REPLY_GRACE`].
 const REPLY_CHECK_EVERY: Duration = Duration::from_millis(100);
 
+/// How long [`Tunnel::start_handshake`] waits for the answer before leaving
+/// the handshake to finish by itself.
+const HANDSHAKE_WAIT: Duration = Duration::from_secs(1);
+
 type WgDevice = Device<(UdpFactory, ToStack, FromStack)>;
 
 /// A WireGuard interface in userspace: gotatun on top of a [`NetStack`].
@@ -170,6 +174,21 @@ impl Tunnel {
             .await
     }
 
+    /// Sends the peer a handshake initiation, unless there's a current
+    /// session or a handshake is already under way, and waits up to
+    /// a second for it to complete.
+    ///
+    /// gotatun stops trying after 90 seconds without an answer, keepalives
+    /// included, until something is sent through the tunnel. This starts it
+    /// again without sending anything.
+    pub async fn start_handshake(&self, peer_key: &WireGuardPublicKey) {
+        let peer = x25519::PublicKey::from(peer_key.to_bytes());
+        // `force_handshake` sends the initiation first, then waits for the
+        // answer with no limit of its own. A failure means the peer or the
+        // socket is gone, which the next connection reports.
+        let _ = tokio::time::timeout(HANDSHAKE_WAIT, self.device.force_handshake(&peer)).await;
+    }
+
     /// Sends the peer's packets to `endpoint` from now on.
     pub async fn set_endpoint(
         &self,
@@ -275,6 +294,23 @@ impl WireGuardTransport {
         })
     }
 
+    /// Looks the endpoint's `name` up and sends packets to the address it
+    /// gives, returning it if it changed.
+    async fn move_to(&self, name: &HostPort) -> Result<Option<SocketAddr>, TransportError> {
+        let found = resolve_endpoint(name).await?;
+        // Set even if unchanged: harmless, and simpler than asking gotatun
+        // where it sends packets now.
+        self.tunnel.set_endpoint(&self.server_key, found).await?;
+        let previous = std::mem::replace(
+            &mut *self
+                .endpoint
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            found,
+        );
+        Ok((previous != found).then_some(found))
+    }
+
     fn current_endpoint(&self) -> SocketAddr {
         *self
             .endpoint
@@ -332,21 +368,14 @@ impl Transport for WireGuardTransport {
 
     fn find_server_again(&self) -> FindServerFuture<'_> {
         Box::pin(async move {
-            let Some(name) = &self.endpoint_name else {
-                return Ok(None);
+            let moved = match &self.endpoint_name {
+                Some(name) => self.move_to(name).await,
+                None => Ok(None),
             };
-            let found = resolve_endpoint(name).await?;
-            // Set even if unchanged: harmless, and simpler than asking
-            // gotatun where it sends packets now.
-            self.tunnel.set_endpoint(&self.server_key, found).await?;
-            let previous = std::mem::replace(
-                &mut *self
-                    .endpoint
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                found,
-            );
-            Ok((previous != found).then_some(found))
+            // At the old address if the lookup failed: the name server may
+            // be what's unreachable.
+            self.tunnel.start_handshake(&self.server_key).await;
+            moved
         })
     }
 }
@@ -744,6 +773,29 @@ mod tests {
             let _stream = transport.connect(target).await.unwrap();
             let age = transport.last_handshake().await.expect("a handshake");
             assert!(age < CONNECT_TIMEOUT, "{age:?}");
+        });
+    }
+
+    /// After 90 seconds without an answer gotatun stops trying, even its
+    /// keepalives, until something is sent; a quiet `gitaway tunnel` sends
+    /// nothing. So looking for the server must start a handshake itself.
+    #[test]
+    fn finding_the_server_again_starts_a_handshake_without_traffic() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server(&client_key.public_key(), 2222).await;
+            let transport = client_for(&server, client_key, false).await;
+            assert_eq!(transport.last_handshake().await, None);
+
+            transport.find_server_again().await.unwrap();
+            let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+            while transport.last_handshake().await.is_none() {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "no handshake without traffic"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
         });
     }
 
