@@ -272,6 +272,10 @@ fn main_page() -> String {
          a key file other users can read is refused.",
     );
     page.item(
+        "$XDG_CONFIG_HOME/gitaway/locks/name.lock",
+        "A profile's lock, so only one gitaway process at a time opens its tunnel.",
+    );
+    page.item(
         "$XDG_CONFIG_HOME/gitaway/runs/name.toml",
         "Written by a running gitaway tunnel so other commands can use its tunnel: the \
          address of its proxy on 127.0.0.1, a random token and the VPN settings it \
