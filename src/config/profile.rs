@@ -34,6 +34,7 @@
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
+use std::ops::Range;
 
 use crate::address::HostPort;
 use crate::git::remote_url::RemoteUrl;
@@ -264,15 +265,19 @@ impl TryFrom<BTreeMap<String, String>> for HostMap {
         let mut map = BTreeMap::new();
         for (from, to) in raw {
             let from_addr: HostPort = from.parse().map_err(|e| format!("[hosts] key: {e}"))?;
-            let to_addr: HostPort = to.parse().map_err(|e| format!("[hosts] `{from}`: {e}"))?;
+            // The messages name the entry by its key, not its value: a
+            // value in the wrong place could be a secret.
+            let to_addr: HostPort = to.parse().map_err(|_| {
+                format!("[hosts] `{from}`: the tunnel side isn't an address or address:port")
+            })?;
             if to_addr.host.parse::<IpAddr>().is_err() {
                 return Err(format!(
-                    "[hosts] `{from}` = `{to}`: the tunnel side must be an IP address, such as 10.0.0.1"
+                    "[hosts] `{from}`: the tunnel side must be an IP address, such as 10.0.0.1"
                 ));
             }
             if from_addr.port.is_some() != to_addr.port.is_some() {
                 return Err(format!(
-                    "[hosts] `{from}` = `{to}`: use host = host, or host:port = host:port"
+                    "[hosts] `{from}`: use host = host, or host:port = host:port"
                 ));
             }
             if map.insert(from_addr, to_addr).is_some() {
@@ -295,13 +300,64 @@ pub struct GlobalConfig {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// Not valid TOML, an unknown field, or a value in the wrong format. The
-    /// message includes the line and column.
-    #[error(transparent)]
-    Toml(#[from] toml::de::Error),
+    /// Not valid TOML, an unknown field, or a value in the wrong format.
+    ///
+    /// It says where, but never quotes the file, as TOML parsers' own
+    /// messages do, nor repeats the value it rejects: the line could hold a
+    /// secret pasted in by mistake, such as a VPN config's `PrivateKey`, and
+    /// every command would print it.
+    #[error("line {line}, column {column}: {message}")]
+    Toml {
+        /// The line, counted from 1.
+        line: usize,
+        /// The column, in characters, counted from 1.
+        column: usize,
+        /// What's wrong there.
+        message: String,
+    },
     /// Valid on its own, but not in combination with other settings.
     #[error("{0}")]
     Invalid(String),
+}
+
+impl ParseError {
+    /// A TOML parser's error about `text`: its `message` and the byte range
+    /// it points at, if any.
+    pub(crate) fn at(text: &str, span: Option<Range<usize>>, message: &str) -> Self {
+        let mut message = message.trim().to_owned();
+        // The parser points at the value it rejects, and its message may
+        // repeat it, which a value in the wrong field could make a secret.
+        // It's repeated in one of two forms: serde's `invalid type: string
+        // "…"` writes it as Rust's debug form (quoted, with escapes such as
+        // `\n`); other messages, gitaway's own included, write it as it is.
+        if let Some(value) = span
+            .clone()
+            .and_then(|span| text.get(span))
+            .and_then(string_value)
+        {
+            message = message
+                .replace(&format!("{value:?}"), "\"…\"")
+                .replace(&value, "…");
+        }
+        let Some(before) = span.and_then(|span| text.get(..span.start)) else {
+            return Self::Invalid(message);
+        };
+        let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+        Self::Toml {
+            line: before.matches('\n').count() + 1,
+            column: before[line_start..].chars().count() + 1,
+            message,
+        }
+    }
+}
+
+/// The string `raw` holds, decoded, if it's a TOML string long enough to
+/// be worth hiding. Shorter ones are left alone: replacing a word that short
+/// would garble the message, and nothing that short is a secret.
+fn string_value(raw: &str) -> Option<String> {
+    let value = raw.parse::<toml_edit::Value>().ok()?;
+    let value = value.as_str()?;
+    (value.chars().count() >= 4).then(|| value.to_owned())
 }
 
 impl Profile {
@@ -318,7 +374,8 @@ impl Profile {
     /// assert!(profile.home.is_none());
     /// ```
     pub fn from_toml(text: &str) -> Result<Self, ParseError> {
-        let profile: Self = toml::from_str(text)?;
+        let profile: Self =
+            toml::from_str(text).map_err(|e| ParseError::at(text, e.span(), e.message()))?;
         profile.validate()?;
         Ok(profile)
     }
@@ -355,7 +412,7 @@ impl Profile {
 impl GlobalConfig {
     /// Parses `config.toml`'s contents.
     pub fn from_toml(text: &str) -> Result<Self, ParseError> {
-        Ok(toml::from_str(text)?)
+        toml::from_str(text).map_err(|e| ParseError::at(text, e.span(), e.message()))
     }
 }
 
@@ -372,6 +429,52 @@ mod tests {
 
     fn with_transport(rest: &str) -> Result<Profile, ParseError> {
         Profile::from_toml(&format!("{TRANSPORT}\n{rest}"))
+    }
+
+    /// A value in the wrong field, such as a key pasted as the MTU, is left
+    /// out of the message too, whichever parser wrote the message.
+    #[test]
+    fn a_rejected_value_is_not_repeated() {
+        for setting in [
+            "mtu = \"not-a-real-secret\"",
+            "address = \"not-a-real-secret\"",
+            "mtu = 'not-a-real-secret'",
+            "mtu = \"\"\"not-a-real-secret\"\"\"",
+            "mtu = '''\nnot-a-real-secret'''",
+            "mtu = \"not\\u002da-real-secret\"",
+            "[hosts]\n\"192.0.2.10\" = \"not-a-real-secret\"",
+            "[hosts]\n\"192.0.2.10\" = \"not-a-real-secret but invalid\"",
+            // Escapes the parser's own messages write back differently.
+            "mtu = \"not\\n-a-real-secret\"",
+            "mtu = \"not\\\"-a-real-secret\"",
+            "mtu = \"not\\\\-a-real-secret\"",
+            "address = \"not\\n-a-real-secret\"",
+            "address = \"not\\\"-a-real-secret\"",
+        ] {
+            let error = with_transport(setting).unwrap_err().to_string();
+            assert!(error.contains("line "), "{error}");
+            assert!(!error.contains("a-real-secret"), "{error}");
+        }
+    }
+
+    /// Without the quoted line, the line and column are how the user finds
+    /// the mistake, so they must be right: here, the `w` of `wrong` on the
+    /// line after the transport table, after a two-character indent.
+    #[test]
+    fn parse_errors_say_where_without_quoting_the_line() {
+        let lines_before = TRANSPORT.lines().count() + 1;
+        let error = with_transport("  wrong = \"\u{e9}t\u{e9}\"").unwrap_err();
+        assert_eq!(
+            error,
+            ParseError::Toml {
+                line: lines_before,
+                column: 3,
+                message: "unknown field `wrong`, expected one of `endpoint`, \
+                          `server_public_key`, `address`, `mtu`"
+                    .to_owned(),
+            }
+        );
+        assert!(!error.to_string().contains("\u{e9}t\u{e9}"), "{error}");
     }
 
     #[test]

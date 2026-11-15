@@ -17,6 +17,10 @@ All notable changes to this project are documented here. The format is based on 
 
 - The man pages in release archives and Homebrew said "gitaway 0.0.0" at the foot of each page; they now show gitaway's real version.
 
+### Security
+
+- An error in a profile file no longer quotes the line it's on, or the value it rejects. A line pasted in by mistake, such as the `PrivateKey` line of a WireGuard config or a web address with a password in it, was printed by every gitaway command until it was removed. The error still gives the line and column.
+
 ## [0.1.1] - 2026-11-13
 
 The first release with prebuilt binaries. Changes since 0.1.0:

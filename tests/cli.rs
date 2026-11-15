@@ -381,6 +381,54 @@ mod profiles {
             .stderr(predicate::str::contains("already exists"));
     }
 
+    /// A secret pasted into a profile by mistake (a VPN config's
+    /// `PrivateKey` line, a password in the web address) must not be quoted
+    /// back by the error that every command then shows.
+    #[test]
+    fn profile_errors_never_quote_the_file() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let file = env.path("config/gitaway/profiles/home.toml");
+        let good = std::fs::read_to_string(&file).unwrap();
+        // Made up: base64 for "secret-key-do-not-print-this-000".
+        let secret = "c2VjcmV0LWtleS1kby1ub3QtcHJpbnQtdGhpcy0wMDA="; // gitleaks:allow
+        let quiet =
+            || predicate::str::contains("line ").and(predicate::str::contains(secret).not());
+        let unknown_field = good.replace(
+            "[transport.wireguard]\n",
+            &format!("[transport.wireguard]\nPrivateKey = \"{secret}\"\n"),
+        );
+        let password = format!("{good}\n[web]\nurl = \"http://alice:{secret}@192.0.2.10:3000\"\n");
+        let not_toml = format!("{good}\nPrivateKey = {secret}\n");
+        for text in [&unknown_field, &password, &not_toml] {
+            std::fs::write(&file, text).unwrap();
+            env.gitaway()
+                .args(["profile", "list"])
+                .assert()
+                .code(1)
+                .stderr(quiet());
+        }
+        // Editing a file that doesn't parse.
+        env.gitaway()
+            .args(["profile", "set", "home", "transport.wireguard.mtu", "1400"])
+            .assert()
+            .code(1)
+            .stderr(quiet());
+
+        std::fs::write(&file, &good).unwrap();
+        env.gitaway()
+            .args([
+                "profile",
+                "set",
+                "home",
+                "transport.wireguard.private_key",
+                secret,
+            ])
+            .assert()
+            .code(1)
+            .stderr(quiet());
+    }
+
     #[test]
     fn set_validates_before_saving() {
         let env = Env::new();
