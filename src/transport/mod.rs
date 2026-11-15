@@ -48,6 +48,13 @@ use crate::keys::store::DeviceSecrets;
 /// handshake the first connection triggers.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How much longer a connection that timed out waits to hear from the VPN
+/// server, to tell a silent server from a silent address behind it. A
+/// WireGuard server that has had packets and has nothing to send back
+/// sends a keepalive after 10 seconds, so it often arrives just after
+/// [`CONNECT_TIMEOUT`].
+pub const SERVER_REPLY_GRACE: Duration = Duration::from_secs(3);
+
 /// A byte stream to a server on the home network.
 pub trait Stream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Stream for T {}
@@ -126,8 +133,9 @@ pub enum TransportError {
     /// The tunnel couldn't be started on this machine.
     #[error("couldn't start the tunnel: {0}")]
     Setup(String),
-    /// The VPN server never completed a handshake, so nothing could cross
-    /// the tunnel.
+    /// Nothing came back from the VPN server during the attempt: it never
+    /// completed a handshake, or it has stopped answering (this computer's
+    /// network dropped, say).
     #[error(
         "no answer from the VPN server at {endpoint} within {} seconds. Check that the \
          profile's server public key is right, that the server has this device's public key \
@@ -135,7 +143,7 @@ pub enum TransportError {
         CONNECT_TIMEOUT.as_secs(),
         endpoint.port()
     )]
-    NoHandshake {
+    ServerSilent {
         /// The server's address, as looked up.
         endpoint: SocketAddr,
     },

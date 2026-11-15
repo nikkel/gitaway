@@ -38,11 +38,11 @@ use gotatun::x25519;
 use ipnetwork::IpNetwork;
 use tokio::sync::mpsc;
 
-use self::udp::UdpFactory;
+use self::udp::{Received, UdpFactory};
 use super::netstack::{NetStack, PacketPipe};
 use super::{
-    CONNECT_TIMEOUT, ConnectFuture, FindServerFuture, HandshakeFuture, Stream, Transport,
-    TransportError,
+    CONNECT_TIMEOUT, ConnectFuture, FindServerFuture, HandshakeFuture, SERVER_REPLY_GRACE, Stream,
+    Transport, TransportError,
 };
 use crate::address::HostPort;
 use crate::config::profile::WireGuard;
@@ -56,6 +56,10 @@ pub const DEFAULT_MTU: u16 = 1420;
 /// How long to wait for the endpoint's DNS lookup.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How often to look for a reply from the VPN server during
+/// [`SERVER_REPLY_GRACE`].
+const REPLY_CHECK_EVERY: Duration = Duration::from_millis(100);
+
 type WgDevice = Device<(UdpFactory, ToStack, FromStack)>;
 
 /// A WireGuard interface in userspace: gotatun on top of a [`NetStack`].
@@ -67,6 +71,7 @@ pub struct Tunnel {
     stack: NetStack,
     // Held to keep the tunnel running; dropping it stops gotatun's tasks.
     device: WgDevice,
+    received: Received,
 }
 
 impl Tunnel {
@@ -95,8 +100,10 @@ impl Tunnel {
         if let Some(endpoint) = endpoint {
             peer = peer.with_endpoint(endpoint);
         }
+        let udp = UdpFactory::default();
+        let received = udp.received();
         let device = DeviceBuilder::new()
-            .with_udp(UdpFactory::default())
+            .with_udp(udp)
             .with_listen_port(listen_port)
             .with_ip_pair(to_stack, from_stack)
             .with_private_key(secrets.key.into_secret())
@@ -104,7 +111,11 @@ impl Tunnel {
             .build()
             .await
             .map_err(|e| TransportError::Setup(e.to_string()))?;
-        Ok(Self { stack, device })
+        Ok(Self {
+            stack,
+            device,
+            received,
+        })
     }
 
     /// The TCP/IP stack inside the tunnel.
@@ -138,10 +149,11 @@ impl Tunnel {
         Ok(())
     }
 
-    /// Whether a handshake with the peer has completed, so packets can
-    /// cross the tunnel.
-    pub async fn handshake_done(&self) -> bool {
-        self.last_handshake().await.is_some()
+    /// How many datagrams have arrived from the peer (in practice: see
+    /// [`Received`]). Unlike a handshake, this shows the peer is answering
+    /// now: a session stays valid for minutes after it has gone quiet.
+    pub fn datagrams_received(&self) -> u64 {
+        self.received.count()
     }
 
     /// How long ago the current session's handshake completed, or `None` if
@@ -191,6 +203,8 @@ pub struct WireGuardTransport {
     endpoint_name: Option<HostPort>,
     /// The address the endpoint was last found at.
     endpoint: Mutex<SocketAddr>,
+    /// [`CONNECT_TIMEOUT`]; shorter in tests that wait in real time.
+    connect_timeout: Duration,
 }
 
 impl WireGuardTransport {
@@ -257,6 +271,7 @@ impl WireGuardTransport {
             server_key: server_key.clone(),
             endpoint_name: None,
             endpoint: Mutex::new(endpoint),
+            connect_timeout: CONNECT_TIMEOUT,
         })
     }
 
@@ -266,17 +281,42 @@ impl WireGuardTransport {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// Whether the VPN server has answered since its count of datagrams
+    /// was `before`, waiting up to [`SERVER_REPLY_GRACE`] for it.
+    ///
+    /// It needs both a session and something received during the attempt:
+    /// a completed handshake, or the keepalive a server sends when it has
+    /// had our packets but has nothing to send back. A session alone isn't
+    /// enough, since it stays valid for up to 3 minutes after the server has
+    /// gone quiet. Nor is a reply alone: a server with a different preshared
+    /// key replies to the handshake, but no session comes of it. Without a
+    /// session no keepalive can come either, so there's no wait.
+    async fn server_answered_since(&self, before: u64) -> bool {
+        let deadline = tokio::time::Instant::now() + SERVER_REPLY_GRACE;
+        loop {
+            let session = self.tunnel.last_handshake().await.is_some();
+            if session && self.tunnel.datagrams_received() > before {
+                return true;
+            }
+            if !session || tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(REPLY_CHECK_EVERY).await;
+        }
+    }
 }
 
 impl Transport for WireGuardTransport {
     fn connect(&self, target: SocketAddr) -> ConnectFuture<'_> {
         Box::pin(async move {
+            let heard_before = self.tunnel.datagrams_received();
             let connecting = self.tunnel.stack.connect(target);
-            let Ok(result) = tokio::time::timeout(CONNECT_TIMEOUT, connecting).await else {
-                return Err(if self.tunnel.handshake_done().await {
+            let Ok(result) = tokio::time::timeout(self.connect_timeout, connecting).await else {
+                return Err(if self.server_answered_since(heard_before).await {
                     TransportError::Timeout { target }
                 } else {
-                    TransportError::NoHandshake {
+                    TransportError::ServerSilent {
                         endpoint: self.current_endpoint(),
                     }
                 });
@@ -412,6 +452,7 @@ mod tests {
     use super::*;
     use crate::keys::device_key::DeviceKey;
     use crate::keys::preshared_key::PresharedKey;
+    use gotatun::noise::TimerParams;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -423,7 +464,7 @@ mod tests {
     struct EchoServer {
         udp_port: u16,
         public_key: WireGuardPublicKey,
-        _tunnel: Arc<Tunnel>,
+        tunnel: Arc<Tunnel>,
         task: tokio::task::JoinHandle<()>,
     }
 
@@ -486,7 +527,7 @@ mod tests {
         EchoServer {
             udp_port,
             public_key,
-            _tunnel: tunnel,
+            tunnel,
             task,
         }
     }
@@ -535,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_does_not_know_this_device_is_reported_as_no_handshake() {
+    fn a_server_that_does_not_know_this_device_is_reported_as_silent() {
         runtime().block_on(async {
             // The server expects a different device's key.
             let stranger = DeviceKey::generate().public_key();
@@ -554,36 +595,85 @@ mod tests {
             let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
             let error = transport.connect(target).await.err().unwrap();
             assert!(
-                matches!(error, TransportError::NoHandshake { endpoint } if endpoint == localhost(server.udp_port)),
+                matches!(error, TransportError::ServerSilent { endpoint } if endpoint == localhost(server.udp_port)),
                 "{error}"
             );
         });
     }
 
-    #[test]
-    fn a_silent_address_behind_a_working_tunnel_is_a_timeout_not_a_handshake_failure() {
-        runtime().block_on(async {
-            let client_key = DeviceKey::generate();
-            let server = echo_server(&client_key.public_key(), 2222).await;
-            let transport = WireGuardTransport::start(
-                CLIENT_ADDRESS.parse().unwrap(),
-                1420,
-                client_key.into(),
-                &server.public_key,
-                localhost(server.udp_port),
-            )
+    /// Makes `tunnel` send its keepalive to `peer` after `after`, instead
+    /// of WireGuard's 10 seconds, so a test can wait for it in real time.
+    async fn send_keepalives_after(tunnel: &Tunnel, peer: &WireGuardPublicKey, after: Duration) {
+        let peer = x25519::PublicKey::from(peer.to_bytes());
+        let params = TimerParams {
+            keepalive_timeout: after..=after,
+            ..TimerParams::default()
+        };
+        let found = tunnel
+            .device
+            .write(async |d| {
+                d.modify_peer(&peer, |peer| {
+                    peer.dangerously_set_timer_params(Some(params));
+                })
+                .await
+            })
             .await
             .unwrap();
-            // A first connection proves the handshake has completed.
+        assert!(found, "the server should know the client");
+    }
+
+    /// The server is there but its network has nothing at the address. It
+    /// says nothing about that, but does send a keepalive, which shows it's
+    /// still answering.
+    #[test]
+    fn a_silent_address_behind_a_working_tunnel_is_a_timeout_not_a_silent_server() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let client_public = client_key.public_key();
+            let server = echo_server(&client_public, 2222).await;
+            // Real time, shortened: the keepalive comes after 100 ms, and
+            // the client gives up waiting for the address after 2 seconds.
+            send_keepalives_after(&server.tunnel, &client_public, Duration::from_millis(100)).await;
+            let mut transport = client_for(&server, client_key, false).await;
+            transport.connect_timeout = Duration::from_secs(2);
             let reachable: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
             let _stream = transport.connect(reachable).await.unwrap();
 
-            tokio::time::pause();
             // Nothing in the server's network has this address.
             let silent: SocketAddr = "10.0.0.9:2222".parse().unwrap();
             let error = transport.connect(silent).await.err().unwrap();
             assert!(
                 matches!(error, TransportError::Timeout { target } if target == silent),
+                "{error}"
+            );
+        });
+    }
+
+    /// As when this computer's network drops: the session from the last
+    /// handshake stays valid for minutes, but nothing gets through any more,
+    /// so it's the VPN server that has gone quiet, not the address behind it.
+    #[test]
+    fn a_server_that_stops_answering_mid_session_is_reported_as_silent() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server(&client_key.public_key(), 2222).await;
+            let transport = client_for(&server, client_key, false).await;
+            let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
+            let _stream = transport.connect(target).await.unwrap();
+
+            let nowhere = {
+                let unused = std::net::UdpSocket::bind(localhost(0)).unwrap();
+                unused.local_addr().unwrap()
+            };
+            transport
+                .tunnel
+                .set_endpoint(&server.public_key, nowhere)
+                .await
+                .unwrap();
+            tokio::time::pause();
+            let error = transport.connect(target).await.err().unwrap();
+            assert!(
+                matches!(error, TransportError::ServerSilent { .. }),
                 "{error}"
             );
         });
@@ -627,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_preshared_key_means_no_handshake() {
+    fn a_missing_preshared_key_is_reported_as_a_silent_server() {
         runtime().block_on(async {
             let client_key = DeviceKey::generate();
             let server = echo_server_with(&client_key.public_key(), Some(preshared()), 2222).await;
@@ -636,7 +726,7 @@ mod tests {
             let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
             let error = transport.connect(target).await.err().unwrap();
             assert!(
-                matches!(error, TransportError::NoHandshake { .. }),
+                matches!(error, TransportError::ServerSilent { .. }),
                 "{error}"
             );
         });

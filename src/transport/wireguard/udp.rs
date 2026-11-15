@@ -1,5 +1,5 @@
 //! The tunnel's UDP socket: gotatun's own, made to survive "connection
-//! reset" errors.
+//! reset" errors, and counting the datagrams that arrive.
 //!
 //! On Windows, when a UDP packet arrives at a port where nothing listens,
 //! the *sender's* socket reports it on its next receive, as a "connection
@@ -29,10 +29,17 @@
 //! through rather than left to the trait's one-packet default.
 //!
 //! Reported upstream as <https://github.com/mullvad/gotatun/issues/226>.
-//! Once gotatun handles it, this module can go: use `with_default_udp` again.
+//! Once gotatun handles it, [`SkipResets`] can go.
+//!
+//! [`Received`] counts every datagram the socket receives, so a timed-out
+//! connection can tell whether the VPN server was still answering. gotatun's
+//! own byte count can't: it leaves out keepalives, which are often all a
+//! server sends.
 
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gotatun::packet::{Packet, PacketBufPool};
 use gotatun::udp::socket::{UdpSocket, UdpSocketFactory};
@@ -50,20 +57,50 @@ fn is_icmp_report(error: &io::Error) -> bool {
         || (cfg!(windows) && error.raw_os_error() == Some(WSAENETRESET))
 }
 
-/// gotatun's ordinary UDP sockets, with [`SkipResets`] on the receive side.
+/// How many datagrams the tunnel's socket has received, from anywhere.
+///
+/// Clones share one count. In practice everything comes from the VPN
+/// server: nothing else knows the socket's random port. A stray datagram
+/// would only change which of two timeout messages is shown.
+#[derive(Debug, Clone, Default)]
+pub struct Received(Arc<AtomicU64>);
+
+impl Received {
+    /// The number so far.
+    pub fn count(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn add(&self, datagrams: usize) {
+        self.0.fetch_add(datagrams as u64, Ordering::Relaxed);
+    }
+}
+
+/// gotatun's ordinary UDP sockets, with [`SkipResets`] and [`Counted`] on
+/// the receive side.
 #[derive(Debug, Default)]
-pub struct UdpFactory(UdpSocketFactory);
+pub struct UdpFactory {
+    sockets: UdpSocketFactory,
+    received: Received,
+}
+
+impl UdpFactory {
+    /// The count of datagrams received by the sockets this factory makes.
+    pub fn received(&self) -> Received {
+        self.received.clone()
+    }
+}
 
 impl UdpTransportFactory for UdpFactory {
     type Send = UdpSocket;
-    type Recv = SkipResets<UdpSocket>;
+    type Recv = SkipResets<Counted<UdpSocket>>;
 
     async fn bind(
         &mut self,
         params: &UdpTransportFactoryParams,
     ) -> io::Result<(Self::Send, Self::Recv)> {
-        let (send, recv) = self.0.bind(params).await?;
-        Ok((send, SkipResets(recv)))
+        let (send, recv) = self.sockets.bind(params).await?;
+        Ok((send, SkipResets(Counted(recv, self.received.clone()))))
     }
 }
 
@@ -99,6 +136,37 @@ impl<R: UdpRecv> UdpRecv for SkipResets<R> {
                 other => return other,
             }
         }
+    }
+
+    fn enable_udp_gro(&self) -> io::Result<()> {
+        self.0.enable_udp_gro()
+    }
+}
+
+/// A receiving socket that adds each datagram it receives to a [`Received`].
+#[derive(Debug)]
+pub struct Counted<R>(R, Received);
+
+impl<R: UdpRecv> UdpRecv for Counted<R> {
+    type RecvManyBuf = R::RecvManyBuf;
+
+    async fn recv_from(&mut self, pool: &mut PacketBufPool) -> io::Result<(Packet, SocketAddr)> {
+        let received = self.0.recv_from(pool).await?;
+        self.1.add(1);
+        Ok(received)
+    }
+
+    // Passed through for the same reason as in `SkipResets`.
+    async fn recv_many_from(
+        &mut self,
+        recv_buf: &mut Self::RecvManyBuf,
+        pool: &mut PacketBufPool,
+        packets: &mut Vec<(Packet, SocketAddr)>,
+    ) -> io::Result<()> {
+        let before = packets.len();
+        self.0.recv_many_from(recv_buf, pool, packets).await?;
+        self.1.add(packets.len().saturating_sub(before));
+        Ok(())
     }
 
     fn enable_udp_gro(&self) -> io::Result<()> {
@@ -189,6 +257,27 @@ mod tests {
 
         let (result, _) = receive_many(vec![Err(io::ErrorKind::PermissionDenied.into())]);
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    /// Every datagram counts, one by one or in a batch, as the tunnel's
+    /// socket is built: resets skipped, then counted. Errors don't count.
+    #[test]
+    fn every_datagram_received_is_counted_and_errors_are_not() {
+        let received = Received::default();
+        let script = vec![reset(), Ok(()), reset(), Ok(())];
+        let mut socket = SkipResets(Counted(Scripted(script.into()), received.clone()));
+        let mut pool = PacketBufPool::new(2);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        runtime.block_on(socket.recv_from(&mut pool)).unwrap();
+        assert_eq!(received.count(), 1);
+        let mut packets = Vec::new();
+        runtime
+            .block_on(socket.recv_many_from(&mut (), &mut pool, &mut packets))
+            .unwrap();
+        assert_eq!(received.count(), 3, "a batch of two counts as two");
     }
 
     /// Windows reports an ICMP "time exceeded" (a datagram that ran out of

@@ -290,7 +290,7 @@ async fn search_tunnel(
         println!("Looking for your git server inside the tunnel at {target}…");
         let stream = match transport.connect(target).await {
             Ok(stream) => stream,
-            Err(TransportError::NoHandshake { endpoint }) => {
+            Err(TransportError::ServerSilent { endpoint }) => {
                 return Err(Error::msg(format!(
                     "no answer from your VPN server at {endpoint}. Check that the server has \
                      added this device (the config came from it, so the keys match once it \
