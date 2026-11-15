@@ -4,7 +4,8 @@
 //! ```text
 //!  every 30 s: how long since the last handshake? (Transport::last_handshake)
 //!    none for over 4 minutes ──▶ say "lost contact" once
-//!                                look the server's name up again every 30 s
+//!                                every 30 s look for the server again: look its
+//!                                name up, start a handshake
 //!                                (Transport::find_server_again); say if it moved
 //!    a new handshake ──────────▶ say "back in contact"
 //! ```
@@ -15,10 +16,12 @@
 //! seconds) starts a new handshake. So a healthy quiet tunnel can go about
 //! 3½ minutes between handshakes.
 //!
-//! The tunnel keeps trying by itself (its keepalives start new handshakes),
-//! so the watchdog only reports, and points it at a new address if the
-//! server's name now gives one: after a router restart, say, when a
-//! dynamic DNS name follows the home connection's new public address.
+//! While the server is quiet, the tunnel's keepalives start new handshakes,
+//! but only for 90 seconds: then gotatun stops trying until something is
+//! sent. So once contact is lost, the watchdog starts a handshake every 30
+//! seconds itself, pointing the tunnel at a new address first if the
+//! server's name now gives one: after a router restart, say, when a dynamic
+//! DNS name follows the home connection's new public address.
 
 use std::time::Duration;
 

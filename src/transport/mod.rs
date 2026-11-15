@@ -88,10 +88,11 @@ pub trait Transport: Send + Sync {
         Box::pin(async { Some(Duration::ZERO) })
     }
 
-    /// Looks the VPN server's name up again, and uses the address it now
-    /// has: a home connection's public address can change, and a dynamic
-    /// DNS name follows it. Returns the new address if it changed. The
-    /// default does nothing.
+    /// Looks for the VPN server again, after contact is lost: looks its name
+    /// up and uses the address it now has (a home connection's public
+    /// address can change, and a dynamic DNS name follows it), then tries
+    /// to reach it, since a tunnel may stop trying by itself. Returns the
+    /// new address if it changed. The default does nothing.
     fn find_server_again(&self) -> FindServerFuture<'_> {
         Box::pin(async { Ok(None) })
     }
