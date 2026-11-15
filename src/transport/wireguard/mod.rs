@@ -662,7 +662,7 @@ mod tests {
             let _stream = transport.connect(target).await.unwrap();
 
             let nowhere = {
-                let unused = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                let unused = std::net::UdpSocket::bind(localhost(0)).unwrap();
                 unused.local_addr().unwrap()
             };
             transport
