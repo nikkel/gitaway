@@ -508,6 +508,25 @@ mod tests {
         });
     }
 
+    /// Only "not allowed" means "not a home host"; any other failure is an
+    /// error, so it isn't mistaken for one.
+    #[test]
+    fn a_home_only_client_hears_other_failures_as_errors() {
+        runtime().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let proxy = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                accept(&mut stream, "secret").await.unwrap();
+                reply(&mut stream, Reply::TimedOut).await.unwrap();
+            });
+            let client = tokio::task::spawn_blocking(move || {
+                connect_home_only(proxy, "secret", "nas", 22).map(|s| s.is_none())
+            });
+            assert!(client.await.unwrap().is_err());
+        });
+    }
+
     #[test]
     fn a_wrong_or_missing_token_is_refused_before_any_request() {
         let wrong = handshake("guess", &[5, 1, 0, 1, 192, 0, 2, 10, 0, 22]);
@@ -562,6 +581,8 @@ mod tests {
     fn constant_time_eq_compares_whole_values() {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
+        // Two differences of the same bits must not cancel out.
+        assert!(!constant_time_eq(b"abc", b"bac"));
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(!constant_time_eq(b"", b"a"));
     }
