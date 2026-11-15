@@ -188,6 +188,18 @@ mod tests {
         assert!(!names_this_computer(&[0xff, 0xfe, b'\r', b'\n'], 3000));
     }
 
+    /// Port 80 also allows a `Host` without a port, but only for this
+    /// computer's names.
+    #[test]
+    fn port_80_still_refuses_other_names() {
+        for host in ["evil.example", "evil.example:80", "localhost:8080"] {
+            assert!(
+                !names_this_computer(head(&format!("Host: {host}\r\n")).as_bytes(), 80),
+                "{host}"
+            );
+        }
+    }
+
     fn opening(bytes: &[u8]) -> Opening {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -210,6 +222,49 @@ mod tests {
         // Closed before a whole head arrived, or a head that never ends.
         assert_eq!(opening(b"GET / HTTP/1.1\r\nHost: local"), Opening::Drop);
         assert_eq!(opening(&vec![b'a'; MAX_HEAD + 4096]), Opening::Drop);
+    }
+
+    /// Reads `first` and then `rest`, as two arrivals. Returns the opening
+    /// and how much of `rest` was left unread.
+    fn opening_in_two_parts(first: &[u8], rest: &[u8]) -> (Opening, usize) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut stream = first.chain(rest);
+            let opening = read_head(&mut stream, 3000).await;
+            (opening, stream.into_inner().1.len())
+        })
+    }
+
+    #[test]
+    fn a_head_may_arrive_in_parts_and_be_large() {
+        let (opening, _) =
+            opening_in_two_parts(b"GET / HTTP/1.1\r\n", b"Host: localhost:3000\r\n\r\n");
+        assert!(matches!(opening, Opening::Forward(_)), "{opening:?}");
+
+        // Long cookies make heads of several KiB.
+        let cookie = format!("Cookie: {}\r\n\r\n", "c".repeat(MAX_HEAD / 2));
+        let (opening, _) = opening_in_two_parts(
+            b"GET / HTTP/1.1\r\nHost: localhost:3000\r\n",
+            cookie.as_bytes(),
+        );
+        assert!(matches!(opening, Opening::Forward(_)), "{opening:?}");
+    }
+
+    /// The limit bounds memory: once a head is past it, reading stops, even
+    /// when the reads don't line up with it.
+    #[test]
+    fn reading_stops_soon_after_the_limit() {
+        let endless = vec![b'a'; MAX_HEAD * 4];
+        let (opening, unread) = opening_in_two_parts(b"a", &endless);
+        assert_eq!(opening, Opening::Drop);
+        assert!(
+            unread >= MAX_HEAD * 2,
+            "read {} bytes",
+            endless.len() - unread
+        );
     }
 
     #[test]
