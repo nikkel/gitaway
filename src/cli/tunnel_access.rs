@@ -137,9 +137,7 @@ pub(crate) fn wait_for(
             RunFile::remove_stale(dir, name).map_err(|e| Error::msg(e.to_string()))?;
             return Ok(Access::Free(lock));
         }
-        if let Some(run) = RunFile::read(dir, name).map_err(|e| Error::msg(e.to_string()))?
-            && TcpStream::connect_timeout(&run.proxy(), PROBE_TIMEOUT).is_ok()
-        {
+        if let Some(run) = running(dir, name)? {
             return Ok(Access::Running(run));
         }
         if let Some(on_wait) = on_wait.take() {
@@ -147,6 +145,13 @@ pub(crate) fn wait_for(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+/// The running `gitaway tunnel` for the profile, if there is one: its runs
+/// file is there and its proxy answers. Doesn't wait or take the lock.
+pub(crate) fn running(dir: &ConfigDir, name: &ProfileName) -> Result<Option<RunFile>, Error> {
+    let run = RunFile::read(dir, name).map_err(|e| Error::msg(e.to_string()))?;
+    Ok(run.filter(|run| TcpStream::connect_timeout(&run.proxy(), PROBE_TIMEOUT).is_ok()))
 }
 
 fn note_waiting(name: &ProfileName) {

@@ -1071,6 +1071,53 @@ mod keys {
         assert!(env.key_file("home").exists());
     }
 
+    /// A running `gitaway tunnel` keeps the key it started with, so a new
+    /// key needs it restarted, and nothing else would say so.
+    #[test]
+    fn a_new_key_says_to_restart_a_running_tunnel() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let restart = || predicate::str::contains("gitaway tunnel home");
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(restart().not());
+
+        // What a running tunnel leaves: its runs file, and a proxy that
+        // accepts connections.
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        std::fs::create_dir_all(env.path("config/gitaway/runs")).unwrap();
+        std::fs::write(
+            env.path("config/gitaway/runs/home.toml"),
+            format!(
+                "proxy = \"{}\"\ntoken = \"{}\"\ntransport = \"wireguard\"\n",
+                proxy.local_addr().unwrap(),
+                "0".repeat(64)
+            ),
+        )
+        .unwrap();
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(restart());
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(IMPORTED_PRIVATE)
+            .assert()
+            .success()
+            .stderr(restart());
+
+        // A runs file gitaway can't read: say so rather than nothing.
+        std::fs::write(env.path("config/gitaway/runs/home.toml"), "not a runs file").unwrap();
+        env.gitaway()
+            .args(["key", "rotate", "home", "--yes"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("couldn't check").and(restart()));
+    }
+
     /// RFC 7748 section 6.1: Alice's private and public keys.
     const IMPORTED_PRIVATE: &str = "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=";
     const IMPORTED_PUBLIC: &str = "hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=";
