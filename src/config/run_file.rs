@@ -243,35 +243,47 @@ mod tests {
         RunFile::remove_stale(&dir(&temp), &name()).unwrap();
     }
 
+    fn file(proxy: &str, token: &str, transport: &str) -> String {
+        format!("proxy = \"{proxy}\"\ntoken = \"{token}\"\ntransport = \"{transport}\"\n")
+    }
+
     #[test]
     fn files_gitaway_did_not_write_are_refused() {
+        let not_hex = "g".repeat(64);
+        let too_long = "t".repeat(MAX_TRANSPORT_TEXT + 1);
         let cases = [
+            ("not on this computer", file("192.0.2.10:1080", TOKEN, "t")),
+            ("short token", file("127.0.0.1:1080", &TOKEN[1..], "t")),
+            ("token not hex", file("127.0.0.1:1080", &not_hex, "t")),
+            ("no VPN settings", file("127.0.0.1:1080", TOKEN, "")),
             (
-                "not on this computer",
-                format!("proxy = \"192.0.2.10:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n"),
-            ),
-            (
-                "short token",
-                "proxy = \"127.0.0.1:1080\"\ntoken = \"abc\"\n".to_owned(),
+                "VPN settings too long",
+                file("127.0.0.1:1080", TOKEN, &too_long),
             ),
             (
                 "unknown field",
-                format!(
-                    "proxy = \"127.0.0.1:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n\
-                     host = \"x\"\n"
-                ),
+                file("127.0.0.1:1080", TOKEN, "t") + "host = \"x\"\n",
             ),
-            (
-                "no port",
-                format!("proxy = \"127.0.0.1\"\ntoken = \"{TOKEN}\"\n"),
-            ),
+            ("no port", file("127.0.0.1", TOKEN, "t")),
             ("not TOML", "proxy =".to_owned()),
         ];
         for (what, text) in cases {
             assert!(RunFile::parse(&text).is_err(), "{what}");
         }
-        let v6 = format!("proxy = \"[::1]:1080\"\ntoken = \"{TOKEN}\"\ntransport = \"t\"\n");
-        assert!(RunFile::parse(&v6).is_ok());
+        assert!(RunFile::parse(&file("[::1]:1080", TOKEN, "t")).is_ok());
+        let longest = "t".repeat(MAX_TRANSPORT_TEXT);
+        assert!(RunFile::parse(&file("127.0.0.1:1080", TOKEN, &longest)).is_ok());
+    }
+
+    /// Anything but a missing file is reported, not taken as "no tunnel".
+    #[test]
+    fn errors_other_than_a_missing_file_are_reported() {
+        let temp = TempDir::new().unwrap();
+        let path = dir(&temp).run_file(&name());
+        // A directory where the file should be can't be read or removed.
+        fs::create_dir_all(&path).unwrap();
+        assert!(RunFile::read(&dir(&temp), &name()).is_err());
+        assert!(RunFile::remove_stale(&dir(&temp), &name()).is_err());
     }
 
     #[test]
