@@ -609,17 +609,33 @@ mod openssh_tests {
     use tokio::net::TcpListener;
 
     /// Generates a key with ssh-keygen. Returns (private key, public key line).
+    ///
+    /// russh can't load about 1 in 256 of ssh-keygen's ECDSA private keys
+    /// (those whose private value starts with a zero byte), so a key it
+    /// can't load is made again. Only the test server needs the private key;
+    /// gitaway itself reads public keys only.
     fn keygen(dir: &std::path::Path, kind: &str) -> (russh::keys::PrivateKey, String) {
         let path = dir.join(kind);
-        let status = Command::new("ssh-keygen")
-            .args(["-q", "-t", kind, "-N", "", "-C", "test", "-f"])
-            .arg(&path)
-            .status()
-            .expect("ssh-keygen is needed for these tests");
-        assert!(status.success());
-        let private = russh::keys::load_secret_key(&path, None).unwrap();
-        let public = std::fs::read_to_string(path.with_extension("pub")).unwrap();
-        (private, public)
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(path.with_extension("pub"));
+            let status = Command::new("ssh-keygen")
+                .args(["-q", "-t", kind, "-N", "", "-C", "test", "-f"])
+                .arg(&path)
+                .status()
+                .expect("ssh-keygen is needed for these tests");
+            assert!(status.success());
+            match russh::keys::load_secret_key(&path, None) {
+                Ok(private) => {
+                    let public = std::fs::read_to_string(path.with_extension("pub")).unwrap();
+                    return (private, public);
+                }
+                Err(e) if tries < 5 => eprintln!("generating {kind} again: {e}"),
+                Err(e) => panic!("russh can't load ssh-keygen's {kind} keys: {e}"),
+            }
+        }
     }
 
     fn fingerprint_from_ssh_keygen(public_key_file: &std::path::Path) -> String {
