@@ -66,7 +66,8 @@ pub enum Command {
     /// tunnel is needed. Only programs on this computer can reach the local
     /// port, but any of them can while the tunnel runs; the server still asks
     /// for its own login. While it runs, other gitaway commands for the
-    /// profile use its tunnel.
+    /// profile use its tunnel, and it says when it loses contact with the
+    /// VPN server and when it's back.
     Tunnel(TunnelArgs),
 }
 

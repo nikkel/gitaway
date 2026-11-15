@@ -11,6 +11,7 @@
 //!  one connection to the web server ── fails? ──▶ say why (no handshake, …)
 //!  lend the tunnel: a proxy for other gitaway commands, and runs/<profile>.toml
 //!  serve: each local connection ──▶ a connection through the tunnel, bytes copied both ways
+//!  meanwhile: say when contact with the VPN server is lost and back (see [`super::watchdog`])
 //!  Ctrl+C, a closed terminal or SIGTERM ──▶ remove the runs file, close everything, exit 0
 //! ```
 //!
@@ -50,7 +51,7 @@ use crate::proxy::Proxy;
 use crate::transport::{self, Lifetime, Transport};
 
 use super::web_guard::{self, Opening};
-use super::{away, prompt, tunnel_access};
+use super::{away, prompt, tunnel_access, watchdog};
 
 /// How long to pause after the system refuses a new connection (too many
 /// open files, say) before accepting again, so the loop doesn't spin.
@@ -113,7 +114,13 @@ pub fn run(store: &Store, name: &ProfileName, port: Option<&str>) -> Result<i32,
         )
         .publish(store.dir(), name)
         .map_err(|e| Error::msg(format!("couldn't save where the tunnel is: {e}")))?;
-        let forwards = start_forwards(listeners, transport, target)?;
+        let forwards = start_forwards(listeners, transport.clone(), target)?;
+        let watchdog = tokio::spawn(async move {
+            watchdog::watch(transport.as_ref(), |message| {
+                eprintln!("gitaway: {message}")
+            })
+            .await;
+        });
         println!(
             "Tunnel for profile `{name}` is up.\n  {local_url}  ->  your git server at {}\n  \
              gitaway commands for `{name}` use this tunnel while it runs.\nPress Ctrl+C to stop.",
@@ -125,6 +132,7 @@ pub fn run(store: &Store, name: &ProfileName, port: Option<&str>) -> Result<i32,
         // Commands stop looking for the tunnel before it goes.
         drop(run_file);
         drop(lent);
+        watchdog.abort();
         drop(forwards);
         println!("Tunnel closed.");
         Ok(0)

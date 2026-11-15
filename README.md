@@ -229,6 +229,7 @@ Open the `localhost` address in your browser. The web address is asked for once 
 
 - The server still thinks its address is the home one. Clone URLs it shows are the home ones, which is what gitaway uses anyway, and some servers show a warning about the address on their sign-in page. Signing in through another site (OAuth) may not work.
 - An `https://` server's certificate names the server, not `localhost`, so the browser warns about it.
+- If the tunnel loses contact with your VPN server for more than 4 minutes (the Wi-Fi drops, the laptop sleeps, the router restarts), it says so, keeps trying, and says when it's back. Meanwhile it looks the server's name up again, so a dynamic DNS name that has moved to your home's new address is followed.
 - While the tunnel runs, other gitaway commands for the same profile (a push, say) use it instead of opening their own, and say so. A second `gitaway tunnel` for the same profile is refused. If you change the profile's VPN settings, `[hosts]` or device key, restart the tunnel; commands that would need the change say so.
 
 ## Configuration

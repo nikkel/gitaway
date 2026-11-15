@@ -14,6 +14,11 @@ pub trait Transport: Send + Sync {
 
 `target` is an address as seen from inside the home network: the right-hand side of a profile's `[hosts]` entry, such as `10.0.0.1:2222`. The result is a byte stream (`AsyncRead + AsyncWrite`). Dropping the transport must close the tunnel and stop any background tasks.
 
+Two more methods have defaults, so a new transport works without them. They let `gitaway tunnel`, which keeps a tunnel open for hours, notice a lost connection and recover:
+
+- `last_handshake`: how long ago the VPN server last proved it's there, or `None` if there's no working session. The default says "just now".
+- `find_server_again`: look the server's name up again and use its new address, returning it if it changed. The default does nothing.
+
 Nothing else in gitaway knows which transport is in use. The local proxy that git talks to, profile selection and the home check all go through `connect`, so a new transport doesn't touch them.
 
 ```text

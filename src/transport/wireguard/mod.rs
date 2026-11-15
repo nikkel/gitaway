@@ -27,6 +27,7 @@ pub mod udp;
 use std::io;
 use std::iter;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use bytes::BytesMut;
@@ -39,7 +40,11 @@ use tokio::sync::mpsc;
 
 use self::udp::UdpFactory;
 use super::netstack::{NetStack, PacketPipe};
-use super::{CONNECT_TIMEOUT, ConnectFuture, Stream, Transport, TransportError};
+use super::{
+    CONNECT_TIMEOUT, ConnectFuture, FindServerFuture, HandshakeFuture, Stream, Transport,
+    TransportError,
+};
+use crate::address::HostPort;
 use crate::config::profile::WireGuard;
 use crate::config::value::WireGuardPublicKey;
 use crate::keys::store::DeviceSecrets;
@@ -136,21 +141,56 @@ impl Tunnel {
     /// Whether a handshake with the peer has completed, so packets can
     /// cross the tunnel.
     pub async fn handshake_done(&self) -> bool {
+        self.last_handshake().await.is_some()
+    }
+
+    /// How long ago the current session's handshake completed, or `None` if
+    /// there's no current session (none yet, or it expired).
+    pub async fn last_handshake(&self) -> Option<Duration> {
         self.device
             .read(async |d| {
                 d.peers()
                     .await
                     .iter()
-                    .any(|p| p.stats.last_handshake.is_some())
+                    .filter_map(|p| p.stats.last_handshake)
+                    .min()
             })
             .await
+    }
+
+    /// Sends the peer's packets to `endpoint` from now on.
+    pub async fn set_endpoint(
+        &self,
+        peer_key: &WireGuardPublicKey,
+        endpoint: SocketAddr,
+    ) -> Result<(), TransportError> {
+        let peer = x25519::PublicKey::from(peer_key.to_bytes());
+        let found = self
+            .device
+            .write(async |d| {
+                d.modify_peer(&peer, |peer| peer.set_endpoint(Some(endpoint)))
+                    .await
+            })
+            .await
+            .map_err(|e| TransportError::Setup(e.to_string()))?;
+        if !found {
+            return Err(TransportError::Setup(
+                "the tunnel's server is missing from its own settings".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
 /// gitaway's side of a WireGuard tunnel to a profile's server.
 pub struct WireGuardTransport {
     tunnel: Tunnel,
-    endpoint: SocketAddr,
+    server_key: WireGuardPublicKey,
+    /// The profile's endpoint, as written: a name to look up again if the
+    /// server is lost. `None` in tests that start from an address.
+    endpoint_name: Option<HostPort>,
+    /// The address the endpoint was last found at.
+    endpoint: Mutex<SocketAddr>,
 }
 
 impl WireGuardTransport {
@@ -175,7 +215,7 @@ impl WireGuardTransport {
                 profile: name.to_owned(),
             });
         }
-        let endpoint = resolve_endpoint(settings).await?;
+        let endpoint = resolve_endpoint(&settings.endpoint).await?;
         let mtu = settings.mtu.unwrap_or(DEFAULT_MTU);
         let mut transport = Self::start(
             address.ip,
@@ -191,6 +231,7 @@ impl WireGuardTransport {
                 .set_keepalive(&settings.server_public_key, keepalive)
                 .await?;
         }
+        transport.endpoint_name = Some(settings.endpoint.clone());
         Ok(transport)
     }
 
@@ -211,7 +252,19 @@ impl WireGuardTransport {
             0,
         )
         .await?;
-        Ok(Self { tunnel, endpoint })
+        Ok(Self {
+            tunnel,
+            server_key: server_key.clone(),
+            endpoint_name: None,
+            endpoint: Mutex::new(endpoint),
+        })
+    }
+
+    fn current_endpoint(&self) -> SocketAddr {
+        *self
+            .endpoint
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -224,7 +277,7 @@ impl Transport for WireGuardTransport {
                     TransportError::Timeout { target }
                 } else {
                     TransportError::NoHandshake {
-                        endpoint: self.endpoint,
+                        endpoint: self.current_endpoint(),
                     }
                 });
             };
@@ -232,12 +285,35 @@ impl Transport for WireGuardTransport {
             Ok(Box::new(stream) as Box<dyn Stream>)
         })
     }
+
+    fn last_handshake(&self) -> HandshakeFuture<'_> {
+        Box::pin(self.tunnel.last_handshake())
+    }
+
+    fn find_server_again(&self) -> FindServerFuture<'_> {
+        Box::pin(async move {
+            let Some(name) = &self.endpoint_name else {
+                return Ok(None);
+            };
+            let found = resolve_endpoint(name).await?;
+            // Set even if unchanged: harmless, and simpler than asking
+            // gotatun where it sends packets now.
+            self.tunnel.set_endpoint(&self.server_key, found).await?;
+            let previous = std::mem::replace(
+                &mut *self
+                    .endpoint
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                found,
+            );
+            Ok((previous != found).then_some(found))
+        })
+    }
 }
 
 /// Looks up the endpoint's address. See [`pick_endpoint`] for which one is
 /// used when a name has several.
-async fn resolve_endpoint(settings: &WireGuard) -> Result<SocketAddr, TransportError> {
-    let endpoint = &settings.endpoint;
+async fn resolve_endpoint(endpoint: &HostPort) -> Result<SocketAddr, TransportError> {
     let port = endpoint.port.expect("validated: endpoints have a port");
     let failed = |reason: String| TransportError::Endpoint {
         endpoint: endpoint.to_string(),
@@ -563,6 +639,59 @@ mod tests {
                 matches!(error, TransportError::NoHandshake { .. }),
                 "{error}"
             );
+        });
+    }
+
+    #[test]
+    fn the_last_handshake_is_unknown_until_the_tunnel_is_used_then_recent() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server(&client_key.public_key(), 2222).await;
+            let transport = client_for(&server, client_key, false).await;
+            assert_eq!(transport.last_handshake().await, None);
+
+            let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
+            let _stream = transport.connect(target).await.unwrap();
+            let age = transport.last_handshake().await.expect("a handshake");
+            assert!(age < CONNECT_TIMEOUT, "{age:?}");
+        });
+    }
+
+    /// As when a dynamic DNS name has moved to the home connection's new
+    /// address: the tunnel was started with the old one, where nothing
+    /// answers, and finds the server again by looking the name up.
+    #[test]
+    fn finding_the_server_again_moves_the_tunnel_to_its_new_address() {
+        runtime().block_on(async {
+            let client_key = DeviceKey::generate();
+            let server = echo_server(&client_key.public_key(), 2222).await;
+            let old_address = {
+                let unused = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+                unused.local_addr().unwrap()
+            };
+            let mut transport = WireGuardTransport::start(
+                CLIENT_ADDRESS.parse().unwrap(),
+                1420,
+                client_key.into(),
+                &server.public_key,
+                old_address,
+            )
+            .await
+            .unwrap();
+            transport.endpoint_name =
+                Some(format!("127.0.0.1:{}", server.udp_port).parse().unwrap());
+
+            let moved = transport.find_server_again().await.unwrap();
+            assert_eq!(moved, Some(localhost(server.udp_port)));
+            let target: SocketAddr = format!("{SERVER_ADDRESS}:2222").parse().unwrap();
+            let mut stream = transport.connect(target).await.unwrap();
+            stream.write_all(b"ping").await.unwrap();
+            let mut echoed = [0; 4];
+            stream.read_exact(&mut echoed).await.unwrap();
+            assert_eq!(&echoed, b"ping");
+
+            // Looking again finds the same address: nothing to report.
+            assert_eq!(transport.find_server_again().await.unwrap(), None);
         });
     }
 
