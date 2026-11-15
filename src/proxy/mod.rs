@@ -281,7 +281,7 @@ async fn through_tunnel(
 ) -> Result<Box<dyn crate::transport::Stream>, (Reply, Option<String>)> {
     routes.transport.connect(tunnel_address).await.map_err(|e| {
         let reply = match &e {
-            TransportError::Timeout { .. } | TransportError::NoHandshake { .. } => Reply::TimedOut,
+            TransportError::Timeout { .. } | TransportError::ServerSilent { .. } => Reply::TimedOut,
             TransportError::Connect { source, .. }
                 if source.kind() == io::ErrorKind::ConnectionRefused =>
             {

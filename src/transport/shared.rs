@@ -25,13 +25,16 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
-use super::{CONNECT_TIMEOUT, ConnectFuture, Stream, Transport, TransportError};
+use super::{
+    CONNECT_TIMEOUT, ConnectFuture, SERVER_REPLY_GRACE, Stream, Transport, TransportError,
+};
 use crate::config::run_file::RunFile;
 use crate::proxy::socks::{self, Reply};
 
 /// How long to wait for the running tunnel to answer: its own connection
-/// through the tunnel may take [`CONNECT_TIMEOUT`].
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(CONNECT_TIMEOUT.as_secs() + 5);
+/// through the tunnel may take [`CONNECT_TIMEOUT`] and [`SERVER_REPLY_GRACE`].
+const ANSWER_TIMEOUT: Duration =
+    Duration::from_secs(CONNECT_TIMEOUT.as_secs() + SERVER_REPLY_GRACE.as_secs() + 5);
 
 /// A running `gitaway tunnel`'s tunnel, used through its proxy for other
 /// gitaway processes.
