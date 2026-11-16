@@ -1,0 +1,68 @@
+# Fuzz targets for gitaway's parsers. Needs nightly Rust and cargo-fuzz; see
+# docs/fuzzing.md. Not part of the main workspace or the published crate.
+[package]
+name = "gitaway-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+gitaway = { path = ".." }
+libfuzzer-sys = "0.4"
+tokio = { version = "1", features = ["rt", "io-util"] }
+
+# Its own workspace, so the main one never builds it.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "socks_accept"
+path = "fuzz_targets/socks_accept.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_head"
+path = "fuzz_targets/web_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_config"
+path = "fuzz_targets/client_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "profile"
+path = "fuzz_targets/profile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "values"
+path = "fuzz_targets/values.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_url"
+path = "fuzz_targets/remote_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_args"
+path = "fuzz_targets/git_args.rs"
+test = false
+doc = false
+bench = false
