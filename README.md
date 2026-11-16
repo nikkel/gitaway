@@ -117,8 +117,15 @@ $ gitaway completions bash > ~/.local/share/bash-completion/completions/gitaway
 $ mkdir -p ~/.config/fish/completions
 $ gitaway completions fish > ~/.config/fish/completions/gitaway.fish
 
-$ mkdir -p ~/.zfunc    # any folder on your fpath, before compinit runs
+$ mkdir -p ~/.zfunc
 $ gitaway completions zsh > ~/.zfunc/_gitaway
+```
+
+Bash only reads that folder if the bash-completion package (version 2) is installed, which most Linux distributions and Homebrew (`bash-completion@2`) provide. Zsh needs the folder on its `fpath`: add these two lines to `~/.zshrc`, with the first before `compinit` runs:
+
+```sh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
 ```
 
 In PowerShell, add `gitaway completions powershell | Out-String | Invoke-Expression` to your profile (`notepad $PROFILE`). Open a new shell afterwards.
