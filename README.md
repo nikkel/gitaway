@@ -121,7 +121,13 @@ $ mkdir -p ~/.zfunc
 $ gitaway completions zsh > ~/.zfunc/_gitaway
 ```
 
-Bash only reads that folder if the bash-completion package (version 2) is installed, which most Linux distributions and Homebrew (`bash-completion@2`) provide. Zsh needs the folder on its `fpath`: add these two lines to `~/.zshrc`, with the first before `compinit` runs:
+Bash only reads that folder if the bash-completion package (version 2) is installed and loaded. Most Linux distributions do both for you. With Homebrew (`brew install bash-completion@2`), add this line to `~/.bash_profile` yourself:
+
+```sh
+[[ -r "$(brew --prefix)/etc/profile.d/bash_completion.sh" ]] && . "$(brew --prefix)/etc/profile.d/bash_completion.sh"
+```
+
+Zsh needs the folder on its `fpath`: add these two lines to `~/.zshrc`, with the first before `compinit` runs:
 
 ```sh
 fpath=(~/.zfunc $fpath)
