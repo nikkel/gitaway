@@ -169,6 +169,7 @@ gitaway push ── lock busy? ── runs/<profile>.toml ──▶ SharedTunnel
 | `src/address.rs` | The `host[:port]` syntax, shared by remote URLs and profiles. |
 | `src/error.rs` | The top-level error type and exit codes. |
 | `xtask/` | Maintenance tasks (`cargo xtask …`), such as generating the man pages. Not part of the published crate. |
+| `fuzz/` | Fuzz targets for the parsers of outside input ([fuzzing.md](fuzzing.md)). Its own workspace; not part of the published crate. |
 | `tests/cli.rs` | End-to-end tests of the real binary, with a fake `git` and a test SSH server. |
 | `tests/proxy.rs` | Real git and ssh through the proxy and the real helper binary. |
 | `examples/home/` | A WireGuard server and Forgejo in Docker, and `e2e.sh`, which runs the real binary against them as a user would. Runs in CI. |

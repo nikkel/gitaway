@@ -36,6 +36,7 @@ The crate is a library with two thin binaries. Each module starts with a `//!` c
 - Every test must be able to fail for a real defect. Don't assert on exact wording unless it's the contract.
 - Mock only what's outside the system or slow. Avoid sleeps, shared state and dependence on test order.
 - A bug fix comes with a test that fails without the fix.
+- Parsers of outside input have fuzz targets: see [`docs/fuzzing.md`](docs/fuzzing.md).
 
 ## Example values only
 
