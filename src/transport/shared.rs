@@ -191,6 +191,29 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_port_is_reported_as_refused() {
+        runtime().block_on(async {
+            let proxy = running_tunnel().await;
+            let closed = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = closed.local_addr().unwrap().port();
+            drop(closed);
+            let error = borrow(&proxy)
+                .connect(SocketAddr::from(([10, 0, 0, 1], port)))
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                matches!(
+                    &error,
+                    TransportError::Connect { source, .. }
+                        if source.kind() == std::io::ErrorKind::ConnectionRefused
+                ),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
     fn a_wrong_token_or_a_stopped_tunnel_is_an_error() {
         runtime().block_on(async {
             let proxy = running_tunnel().await;

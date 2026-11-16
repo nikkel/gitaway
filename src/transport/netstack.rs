@@ -545,6 +545,72 @@ mod tests {
     }
 
     #[test]
+    fn dropping_a_stream_closes_the_connection() {
+        runtime().block_on(async {
+            let (client, client_pipe) = NetStack::new("10.0.0.2".parse().unwrap(), 1420);
+            let (server, server_pipe) = NetStack::new("10.0.0.1".parse().unwrap(), 1420);
+            wire(client_pipe, server_pipe);
+
+            let accept = tokio::spawn(async move {
+                let mut stream = server.accept(22).await.unwrap();
+                let mut received = Vec::new();
+                stream.read_to_end(&mut received).await.unwrap();
+                received
+            });
+            let mut stream = client
+                .connect("10.0.0.1:22".parse().unwrap())
+                .await
+                .unwrap();
+            stream.write_all(b"bye").await.unwrap();
+            drop(stream);
+            let received = tokio::time::timeout(Duration::from_secs(10), accept)
+                .await
+                .expect("the server never saw the connection close")
+                .unwrap();
+            assert_eq!(received, b"bye");
+        });
+    }
+
+    #[test]
+    fn two_connections_to_the_same_server_are_kept_apart() {
+        runtime().block_on(async {
+            let (client, client_pipe) = NetStack::new("10.0.0.2".parse().unwrap(), 1420);
+            let (server, server_pipe) = NetStack::new("10.0.0.1".parse().unwrap(), 1420);
+            wire(client_pipe, server_pipe);
+
+            let server = Arc::new(server);
+            let echo = |server: Arc<NetStack>| async move {
+                let mut stream = server.accept(22).await.unwrap();
+                let mut received = [0; 5];
+                stream.read_exact(&mut received).await.unwrap();
+                stream.write_all(&received).await.unwrap();
+                // Hold the connection until the client has read.
+                let _ = stream.read(&mut [0]).await;
+            };
+            let first_server = tokio::spawn(echo(server.clone()));
+            let second_server = tokio::spawn(echo(server.clone()));
+
+            let target = "10.0.0.1:22".parse().unwrap();
+            let both = async {
+                let mut first = client.connect(target).await.unwrap();
+                let mut second = client.connect(target).await.unwrap();
+                first.write_all(b"first").await.unwrap();
+                second.write_all(b"other").await.unwrap();
+                let mut echoed = [0; 5];
+                first.read_exact(&mut echoed).await.unwrap();
+                assert_eq!(&echoed, b"first");
+                second.read_exact(&mut echoed).await.unwrap();
+                assert_eq!(&echoed, b"other");
+            };
+            tokio::time::timeout(Duration::from_secs(10), both)
+                .await
+                .expect("the connections got in each other's way");
+            first_server.abort();
+            second_server.abort();
+        });
+    }
+
+    #[test]
     fn a_closed_port_refuses() {
         runtime().block_on(async {
             let (client, client_pipe) = NetStack::new("10.0.0.2".parse().unwrap(), 1420);

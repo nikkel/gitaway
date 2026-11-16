@@ -20,6 +20,15 @@ use tempfile::TempDir;
 
 const SERVER_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
+/// The most gitaway reads of a key or VPN config.
+const INPUT_LIMIT: usize = 64 * 1024;
+
+/// `config` with a comment added to make it exactly `len` bytes long.
+fn padded(config: &str, len: usize) -> String {
+    let filler = len - config.len() - "#\n".len();
+    format!("{config}#{}\n", "x".repeat(filler))
+}
+
 struct Env {
     root: TempDir,
 }
@@ -694,6 +703,36 @@ mod network {
             .assert()
             .code(1)
             .stderr(predicate::str::contains("GITAWAY_PROFILE"));
+
+        // Set but empty is the same as not set.
+        let unset = env.gitaway().args(["-C", "app", "fetch"]).output().unwrap();
+        let empty = env
+            .gitaway()
+            .args(["-C", "app", "fetch"])
+            .env("GITAWAY_PROFILE", "")
+            .output()
+            .unwrap();
+        assert_eq!(empty.status.code(), unset.status.code());
+        assert_eq!(
+            String::from_utf8_lossy(&empty.stderr),
+            String::from_utf8_lossy(&unset.stderr)
+        );
+    }
+
+    #[test]
+    fn of_several_matching_profiles_the_one_at_home_is_used() {
+        let env = Env::new();
+        let (port, key) = ssh_server(1);
+        // Both handle 127.0.0.1, but only `home`'s pinned key answers there.
+        home_profile(&env, "cabin", port, HOST_KEY);
+        home_profile(&env, "home", port, &key);
+        env.repo("app", REMOTE);
+
+        env.gitaway()
+            .args(["-C", "app", "ls-remote"])
+            .assert()
+            .code(128);
+        assert!(env.ran("-C app ls-remote"), "{:?}", env.git_log());
     }
 
     #[test]
@@ -892,6 +931,46 @@ mod network {
                     .and(predicate::str::contains("no tunnel address").not()),
             );
         assert!(!env.ran("-C app fetch"), "{:?}", env.git_log());
+
+        // The same jump host in the repository's core.sshCommand.
+        let env = Env::new();
+        always_away(&env);
+        let app = env.repo("app", REMOTE);
+        env.git(
+            &app,
+            &["config", "core.sshCommand", "ssh -J bastion.example.net"],
+        );
+        env.gitaway()
+            .args(["-C", "app", "fetch"])
+            .env_remove("GIT_SSH_COMMAND")
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("ProxyJump")
+                    .and(predicate::str::contains("no tunnel address").not()),
+            );
+        assert!(!env.ran("-C app fetch"), "{:?}", env.git_log());
+    }
+
+    #[test]
+    fn another_profile_does_not_stop_a_command_that_also_reaches_other_sites() {
+        let env = Env::new();
+        always_away(&env);
+        env.add_profile("office", &["--host", "127.0.0.2=10.0.0.1"]);
+        let app = env.repo("app", REMOTE);
+        env.git(
+            &app,
+            &["remote", "add", "mirror", "https://example.com/app.git"],
+        );
+        // origin is home's, mirror is nobody's: only home's tunnel is needed.
+        env.gitaway()
+            .args(["-C", "app", "fetch", "--all"])
+            .assert()
+            .code(1)
+            .stderr(
+                predicate::str::contains("has no tunnel address")
+                    .and(predicate::str::contains("one tunnel per command").not()),
+            );
     }
 
     #[test]
@@ -1161,6 +1240,31 @@ mod keys {
         env.gitaway()
             .args(["key", "import", "home"])
             .write_stdin(config)
+            .assert()
+            .success();
+        assert_eq!(peer_public_key(&env, "home"), IMPORTED_PUBLIC);
+    }
+
+    #[test]
+    fn import_reads_up_to_the_limit_and_refuses_more() {
+        let env = Env::new();
+        env.add_profile("home", &[]);
+        let before = peer_public_key(&env, "home");
+        let config = format!(
+            "[Interface]\nPrivateKey = {IMPORTED_PRIVATE}\nAddress = 10.0.0.2/32\n\n\
+             [Peer]\nPublicKey = {SERVER_KEY}\nEndpoint = vpn.example.net:51820\n"
+        );
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(padded(&config, INPUT_LIMIT + 1))
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("too long"));
+        assert_eq!(peer_public_key(&env, "home"), before);
+
+        env.gitaway()
+            .args(["key", "import", "home", "--yes"])
+            .write_stdin(padded(&config, INPUT_LIMIT))
             .assert()
             .success();
         assert_eq!(peer_public_key(&env, "home"), IMPORTED_PUBLIC);
@@ -1486,16 +1590,21 @@ mod away {
         let env = Env::new();
         let port = http_server();
         away_profile(&env, &[port]);
-        env.gitaway()
-            .args(["ls-remote", &format!("http://192.0.2.10:{port}/app.git")])
-            .assert()
-            .success();
+        let url = format!("http://192.0.2.10:{port}/app.git");
+        env.gitaway().args(["ls-remote", &url]).assert().success();
         #[cfg(unix)]
         assert!(
             env.ran("ls-remote http://192.0.2.10"),
             "{:?}",
             env.git_log()
         );
+
+        // Through a named remote, which has its own proxy setting.
+        env.repo("app", &url);
+        env.gitaway()
+            .args(["-C", "app", "ls-remote", "origin"])
+            .assert()
+            .success();
     }
 
     #[test]
@@ -1961,6 +2070,55 @@ mod setup {
             .assert()
             .success()
             .stdout(predicate::str::contains("you're home"));
+    }
+
+    #[test]
+    fn without_yes_or_a_terminal_it_does_not_assume_home() {
+        let env = Env::new();
+        let (port, _) = ssh_server(23);
+        let (_device, config) = server_and_config(&env, &[port]);
+        // The git server answers directly, but nobody was asked whether
+        // this is home, so setup goes through the tunnel.
+        let url = format!("ssh://git@127.0.0.1:{port}/alice/app.git");
+        env.gitaway()
+            .args(["setup", "--config", config.to_str().unwrap(), "--url", &url])
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("Tunnel: works")
+                    .and(predicate::str::contains("not tested").not()),
+            );
+    }
+
+    #[test]
+    fn the_config_is_read_up_to_the_limit_from_a_file_or_stdin() {
+        let env = Env::new();
+        let (port, _) = ssh_server(24);
+        let device = DeviceKey::generate();
+        let config = client_config(&env, &device, SERVER_KEY, "127.0.0.1:9");
+        let text = std::fs::read_to_string(&config).unwrap();
+        let url = format!("ssh://git@127.0.0.1:{port}/alice/app.git");
+        let setup = |name: &str, source: &str, stdin: String| {
+            env.gitaway()
+                .args(["setup", name, "--yes", "--config", source, "--url", &url])
+                .write_stdin(stdin)
+                .assert()
+        };
+
+        let too_long = env.path("too-long.conf");
+        std::fs::write(&too_long, padded(&text, INPUT_LIMIT + 1)).unwrap();
+        setup("one", too_long.to_str().unwrap(), String::new())
+            .code(1)
+            .stderr(predicate::str::contains("too long"));
+        setup("two", "-", padded(&text, INPUT_LIMIT + 1))
+            .code(1)
+            .stderr(predicate::str::contains("too long"));
+        assert!(nothing_saved(&env, "one") && nothing_saved(&env, "two"));
+
+        let longest = env.path("longest.conf");
+        std::fs::write(&longest, padded(&text, INPUT_LIMIT)).unwrap();
+        setup("three", longest.to_str().unwrap(), String::new()).success();
+        setup("four", "-", padded(&text, INPUT_LIMIT)).success();
     }
 
     #[test]

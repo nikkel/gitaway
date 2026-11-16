@@ -407,6 +407,16 @@ mod tests {
     }
 
     #[test]
+    fn a_key_file_that_cannot_be_removed_is_an_error() {
+        let (temp, store) = file_store();
+        let home = name("home");
+        let dir = ConfigDir::new(Some(temp.path().into()), None).unwrap();
+        // A directory where the key file should be.
+        std::fs::create_dir_all(dir.key_file(&home)).unwrap();
+        assert!(matches!(store.delete(&home), Err(KeyError::Io { .. })));
+    }
+
+    #[test]
     fn keys_are_per_profile() {
         let (_temp, store) = file_store();
         let secrets = DeviceSecrets::new(DeviceKey::generate());
