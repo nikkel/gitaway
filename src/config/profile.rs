@@ -612,6 +612,9 @@ mod tests {
         for (what, text) in cases {
             assert!(Profile::from_toml(text).is_err(), "{what} was accepted");
         }
+        // The smallest MTU allowed is allowed.
+        let smallest = format!("{TRANSPORT}mtu = {MIN_MTU}");
+        assert!(Profile::from_toml(&smallest).is_ok());
     }
 
     #[test]

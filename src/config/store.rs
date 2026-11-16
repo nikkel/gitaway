@@ -401,6 +401,27 @@ server_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         ));
     }
 
+    /// Only a missing file means "none"; any other failure must be
+    /// reported, or a command could act as if a profile or setting weren't
+    /// there. A directory where a file should be (and a file where the
+    /// profiles directory should be) can't be read on any platform.
+    #[test]
+    fn errors_other_than_a_missing_file_are_reported() {
+        let (_tmp, files) = store();
+        fs::create_dir_all(files.dir().config_file()).unwrap();
+        assert!(matches!(files.load_global(), Err(StoreError::Io { .. })));
+        fs::create_dir_all(files.dir().profile_file(&name("home"))).unwrap();
+        assert!(matches!(
+            files.remove_profile(&name("home")),
+            Err(StoreError::Io { .. })
+        ));
+
+        let (_tmp, no_dir) = store();
+        fs::create_dir_all(no_dir.dir().path()).unwrap();
+        fs::write(no_dir.dir().profiles_dir(), "").unwrap();
+        assert!(matches!(no_dir.load_profiles(), Err(StoreError::Io { .. })));
+    }
+
     #[test]
     fn broken_profile_is_an_error_naming_the_file() {
         let (_tmp, store) = store();
