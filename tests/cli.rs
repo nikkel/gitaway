@@ -230,6 +230,7 @@ mod passthrough {
             .code(2)
             .stderr(predicate::str::contains("possible values"));
         // Not a git command, so git is never asked.
+        #[cfg(unix)]
         assert!(!env.ran("completions"), "{:?}", env.git_log());
     }
 

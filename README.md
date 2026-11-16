@@ -111,9 +111,14 @@ On macOS, the first time a newly installed gitaway reads its device key, macOS a
 `gitaway completions <shell>` prints a script that completes gitaway's own commands and their options (`bash`, `zsh`, `fish`, `powershell` and `elvish`). It doesn't complete git's commands or the profile names. It works for `gitaway`, not `git away`.
 
 ```console
+$ mkdir -p ~/.local/share/bash-completion/completions
 $ gitaway completions bash > ~/.local/share/bash-completion/completions/gitaway
+
+$ mkdir -p ~/.config/fish/completions
 $ gitaway completions fish > ~/.config/fish/completions/gitaway.fish
-$ gitaway completions zsh > ~/.zfunc/_gitaway    # a folder on your fpath, before compinit runs
+
+$ mkdir -p ~/.zfunc    # any folder on your fpath, before compinit runs
+$ gitaway completions zsh > ~/.zfunc/_gitaway
 ```
 
 In PowerShell, add `gitaway completions powershell | Out-String | Invoke-Expression` to your profile (`notepad $PROFILE`). Open a new shell afterwards.
