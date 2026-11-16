@@ -54,6 +54,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "Open your git server's web interface on this computer, through the tunnel, until \
          Ctrl+C. See gitaway-tunnel(1).",
     ),
+    (
+        "completions",
+        "Print a shell completion script for gitaway's own commands. See gitaway-completions(1).",
+    ),
 ];
 
 /// Writes every page into `dir`, creating it if needed. Existing files

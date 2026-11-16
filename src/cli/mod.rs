@@ -33,6 +33,7 @@
 pub mod args;
 pub mod away;
 pub mod check_cmd;
+pub mod completions_cmd;
 pub mod key_cmd;
 pub mod network;
 pub mod profile_cmd;
@@ -60,7 +61,16 @@ use crate::proxy;
 
 /// gitaway's own commands. They take precedence over git aliases with the
 /// same name.
-pub const OWN_COMMANDS: &[&str] = &["setup", "profile", "use", "peer", "key", "check", "tunnel"];
+pub const OWN_COMMANDS: &[&str] = &[
+    "setup",
+    "profile",
+    "use",
+    "peer",
+    "key",
+    "check",
+    "tunnel",
+    "completions",
+];
 
 /// Commands planned for later milestones. They're claimed now, so a git
 /// alias with the same name doesn't silently change meaning when they land.
@@ -72,13 +82,14 @@ gitaway: reach your self-hosted git server from anywhere
 Usage: gitaway [--profile <name>] <command> [args]
 
 gitaway's own commands:
-  setup      Set up a profile from the VPN config your server gave this device
-  check      Test a profile's tunnel and pin its home server's host key
-  profile    Add, list, show, change and remove profiles
-  use        Pin the current repository to a profile
-  peer       Print what the WireGuard server needs to know about this device
-  key        Replace or import this device's WireGuard key
-  tunnel     Open your git server's web interface here, through the tunnel
+  setup        Set up a profile from the VPN config your server gave this device
+  check        Test a profile's tunnel and pin its home server's host key
+  profile      Add, list, show, change and remove profiles
+  use          Pin the current repository to a profile
+  peer         Print what the WireGuard server needs to know about this device
+  key          Replace or import this device's WireGuard key
+  tunnel       Open your git server's web interface here, through the tunnel
+  completions  Print a shell completion script
 
 Every other command goes to git. Network commands first check whether you're
 at the remote's home network: clone, fetch, pull, push, ls-remote, remote
@@ -203,6 +214,7 @@ fn run_own_command(
             let name = pick_profile(&store, command.profile, profile_flag, global_options)?;
             tunnel_cmd::run(&store, &name, command.port.as_deref())
         }
+        args::Command::Completions(command) => completions_cmd::run(command),
         args::Command::Key(args::KeyCommand::Import { profile, yes }) => {
             let store = open_store()?;
             let name = pick_profile(&store, profile, profile_flag, global_options)?;

@@ -69,6 +69,19 @@ pub enum Command {
     /// profile use its tunnel, and it says when it loses contact with the
     /// VPN server and when it's back.
     Tunnel(TunnelArgs),
+    /// Print a shell completion script for gitaway's own commands.
+    ///
+    /// Prints the script to standard output. See the examples in the
+    /// README for where each shell looks for it. Git's own commands
+    /// aren't completed: only gitaway's.
+    Completions(CompletionsArgs),
+}
+
+/// `gitaway completions`
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// The shell to print a script for.
+    pub shell: clap_complete::Shell,
 }
 
 /// `gitaway setup`
