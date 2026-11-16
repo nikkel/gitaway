@@ -217,6 +217,24 @@ mod passthrough {
     }
 
     #[test]
+    fn completions_print_a_script_for_a_known_shell_only() {
+        let env = Env::new();
+        env.gitaway()
+            .args(["completions", "bash"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("tunnel"));
+        env.gitaway()
+            .args(["completions", "tcsh"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("possible values"));
+        // Not a git command, so git is never asked.
+        #[cfg(unix)]
+        assert!(!env.ran("completions"), "{:?}", env.git_log());
+    }
+
+    #[test]
     fn list_is_no_longer_reserved_so_a_git_alias_works() {
         let env = Env::new();
         env.gitaway()

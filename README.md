@@ -106,6 +106,36 @@ On macOS, the first time a newly installed gitaway reads its device key, macOS a
 
 `gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) are in the release archives (`dist-man/`; copy them into a `man1` folder on your `MANPATH`) and come with Homebrew. The installer scripts and `cargo install` don't install them, so `git away --help` reports that there's no manual entry; use `git away -h` instead.
 
+### Shell completions
+
+`gitaway completions <shell>` prints a script that completes gitaway's own commands and their options (`bash`, `zsh`, `fish`, `powershell` and `elvish`). It doesn't complete git's commands or the profile names. It works for `gitaway`, not `git away`.
+
+```console
+$ mkdir -p ~/.local/share/bash-completion/completions
+$ gitaway completions bash > ~/.local/share/bash-completion/completions/gitaway
+
+$ mkdir -p ~/.config/fish/completions
+$ gitaway completions fish > ~/.config/fish/completions/gitaway.fish
+
+$ mkdir -p ~/.zfunc
+$ gitaway completions zsh > ~/.zfunc/_gitaway
+```
+
+Bash only reads that folder if the bash-completion package (version 2) is installed and loaded. Most Linux distributions do both for you. With Homebrew (`brew install bash-completion@2`), add this line to `~/.bash_profile` yourself:
+
+```sh
+[[ -r "$(brew --prefix)/etc/profile.d/bash_completion.sh" ]] && . "$(brew --prefix)/etc/profile.d/bash_completion.sh"
+```
+
+Zsh needs the folder on its `fpath`: add these two lines to `~/.zshrc`, with the first before `compinit` runs:
+
+```sh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+In PowerShell, add `gitaway completions powershell | Out-String | Invoke-Expression` to your profile (`notepad $PROFILE`). Open a new shell afterwards.
+
 ## Quick start
 
 All addresses and keys here are examples.
@@ -208,6 +238,7 @@ The [configuration reference](docs/configuration.md) explains each setting.
 | `gitaway key rotate [name]` | Replace the profile's device key. The server needs the new public key afterwards. |
 | `gitaway key import [name]` | Use a private key the server or a WireGuard app already made, read from stdin: the key alone, or a whole client config. |
 | `gitaway tunnel [name]` | Open your git server's web interface on this computer, through the tunnel, until Ctrl+C. |
+| `gitaway completions <shell>` | Print a shell completion script. |
 | anything else | Passed to git. |
 
 `--profile <name>`, typed before the command, picks the profile for one command. Every command has `--help`, and `man gitaway` (Homebrew and release archives) covers the rest.
