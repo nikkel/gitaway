@@ -377,10 +377,12 @@ mod tests {
 
     #[test]
     fn unknown_leading_option_stops_classification() {
-        let args = os(&["--not-a-git-option", "push"]);
-        let invocation = classify(&args);
-        assert_eq!(invocation.subcommand, None);
-        assert_eq!(invocation.kind, Kind::Local);
+        for unknown in ["--not-a-git-option", "--not-a-git-option=value"] {
+            let args = os(&[unknown, "push"]);
+            let invocation = classify(&args);
+            assert_eq!(invocation.subcommand, None, "{unknown}");
+            assert_eq!(invocation.kind, Kind::Local, "{unknown}");
+        }
     }
 
     #[test]
