@@ -50,7 +50,8 @@ It stops and saves the input as `fuzz/artifacts/<target>/crash-…` (or
 `timeout-…`, `oom-…`). Then:
 
 1. Run that input again to see the failure:
-   `cargo +nightly fuzz run <target> fuzz/artifacts/<target>/<file>`.
+   `cargo +nightly fuzz run <target> artifacts/<target>/<file>`, from
+   `fuzz/`.
 2. Write an ordinary unit test with that input, next to the code, and check
    it fails.
 3. Fix the code; the test then passes, and keeps the bug from coming back

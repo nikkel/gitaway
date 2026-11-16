@@ -21,8 +21,11 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let port = u16::from_be_bytes(*port);
+    // Reading moves the slice past the bytes read.
     let mut stream = request;
-    if let Opening::Forward(head) = RUNTIME.block_on(read_opening(&mut stream, port)) {
-        assert!(request.starts_with(&head), "forwarded bytes it wasn't sent");
+    let opening = RUNTIME.block_on(read_opening(&mut stream, port));
+    if let Opening::Forward(head) = opening {
+        let read = &request[..request.len() - stream.len()];
+        assert_eq!(head, read, "forwarded other bytes than it read");
     }
 });
