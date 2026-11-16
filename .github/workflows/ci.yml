@@ -32,6 +32,10 @@ jobs:
       # Package builds generate the man pages, so make sure that works.
       - run: cargo test -p xtask
       - run: cargo xtask man
+      # The fuzz targets are their own workspace (docs/fuzzing.md); keep them
+      # building. Fuzzing itself needs nightly and runs locally.
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path fuzz/Cargo.toml -- -D warnings
 
   test:
     strategy:
