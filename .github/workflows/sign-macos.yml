@@ -1,0 +1,151 @@
+# Signs and notarizes the macOS programs of a release. dist's release.yml calls
+# this (`local-artifacts-jobs` in dist-workspace.toml), and makes the installers
+# and checksums only once it has finished, so they match the signed archives.
+#
+# dist can sign too, but in the jobs that compile, where every dependency's
+# build script could read the certificate. Here nothing is compiled, and the
+# secrets are in the `release` environment: only version tags can use them, and
+# only after the maintainer approves.
+name: Sign macOS
+
+on:
+  workflow_call:
+    inputs:
+      # Passed by dist to every custom job.
+      plan:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  # dist starts this workflow together with the builds and has no way to make
+  # it wait for them.
+  wait-for-builds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for the macOS builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100"
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            while true; do
+              # A request that fails is tried again; the job's timeout ends it.
+              conclusion=$(gh api "$jobs" --jq ".jobs[] | select(.name == \"build-local-artifacts ($target)\") | .conclusion // \"\"") || conclusion=""
+              case "$conclusion" in
+                success) echo "$target: built"; break ;;
+                "") sleep 20 ;;
+                *) echo "$target: the build ended with $conclusion" >&2; exit 1 ;;
+              esac
+            done
+          done
+
+  sign:
+    needs: wait-for-builds
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: artifacts-build-local-aarch64-apple-darwin
+          path: signed/aarch64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: artifacts-build-local-x86_64-apple-darwin
+          path: signed/x86_64-apple-darwin
+
+      - name: Sign and notarize
+        shell: bash # stops on failures inside pipelines too
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          # Apple's "Developer ID - G2" intermediate, which issued the
+          # certificate. It expires in September 2031.
+          INTERMEDIATE_URL: https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          INTERMEDIATE_SHA256: f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a
+        run: |
+          umask 077
+          private="$RUNNER_TEMP/signing"
+          mkdir "$private"
+          keychain="$private/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$private"' EXIT
+
+          printf %s "$APPLE_CERTIFICATE_P12" | base64 -d > "$private/certificate.p12"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$private/key.p8"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$private/intermediate.cer" "$INTERMEDIATE_URL"
+          echo "$INTERMEDIATE_SHA256  $private/intermediate.cer" | shasum -a 256 -c -
+
+          keychain_password=$(openssl rand -hex 24)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings "$keychain" # no lock timeout
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$private/intermediate.cer" -k "$keychain"
+          security import "$private/certificate.p12" -f pkcs12 -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Lets codesign use the key without a dialog. Its output lists the key.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          # codesign finds the intermediate only in a listed keychain. The
+          # runner is thrown away afterwards.
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+
+          # Tools may name the certificate in errors, and logs are public. Every
+          # signed program shows these too, but the log needn't.
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep '"Developer ID Application: ')
+          SIGNING_IDENTITY=$(awk '{ print $2 }' <<< "$identity")
+          holder=$(sed -E 's/.*"Developer ID Application: (.*) \([A-Z0-9]+\)".*/\1/' <<< "$identity")
+          team=$(sed -E 's/.*\(([A-Z0-9]+)\)".*/\1/' <<< "$identity")
+          for private_value in "$SIGNING_IDENTITY" "$holder" "$team" "$keychain_password"; do
+            echo "::add-mask::$private_value"
+          done
+          if [[ ! $SIGNING_IDENTITY =~ ^[0-9A-F]{40}$ ]]; then
+            echo "expected exactly one valid Developer ID Application identity" >&2
+            exit 1
+          fi
+          export SIGNING_IDENTITY
+          export SIGNING_KEYCHAIN="$keychain"
+          export NOTARY_KEY_FILE="$private/key.p8"
+          unset APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_P8
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            .github/scripts/sign-macos-archive.sh "signed/$target" "$target"
+          done
+
+      - name: Run the signed program
+        run: |
+          mkdir "$RUNNER_TEMP/try"
+          tar -xJf signed/aarch64-apple-darwin/gitaway-aarch64-apple-darwin.tar.xz -C "$RUNNER_TEMP/try"
+          "$RUNNER_TEMP/try/gitaway-aarch64-apple-darwin/gitaway" --version
+
+      # The build jobs attested the unsigned archives, which aren't published.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: signed/*/gitaway-*
+
+      # Replace what the build jobs uploaded.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-build-local-aarch64-apple-darwin
+          path: signed/aarch64-apple-darwin/
+          if-no-files-found: error
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-build-local-x86_64-apple-darwin
+          path: signed/x86_64-apple-darwin/
+          if-no-files-found: error
+          overwrite: true
