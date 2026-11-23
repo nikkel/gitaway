@@ -200,7 +200,7 @@ Each module starts with a `//!` comment that explains its purpose, how it fits i
 ```
 
 - **It's separate from the build** so that no dependency's build script can read the certificate. The secrets are in the `release` environment, which needs the maintainer's approval and accepts only version tags.
-- **It replaces what the build uploaded**, under the same artifact names: the archive, its `.sha256` file, and the hash in dist's manifest, which the installers and `sha256.sum` are made from. The signed archives get their own attestation.
+- **It replaces what the build uploaded**, under the same artifact names: the archive, its `.sha256` file, and the hash in dist's manifest, which the installers and `sha256.sum` are made from. The signed archives get their own attestation. A build that starts late copies other targets' hashes into its own manifest, so every target's manifest is corrected (`use-signed-hashes.sh`).
 - **If anything fails, nothing is published.** dist creates the release only after this job has succeeded.
 - `.github/scripts/sign-macos-archive.sh` does the work for one archive. With `SIGNING_IDENTITY=-` it needs no certificate, so you can try it on any release archive with its checksum file and manifest.
 

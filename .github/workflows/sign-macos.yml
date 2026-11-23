@@ -20,35 +20,42 @@ permissions: {}
 
 jobs:
   # dist starts this workflow together with the builds and has no way to make
-  # it wait for them.
+  # it wait for them. It waits for all of them, not just the macOS ones: see
+  # use-signed-hashes.sh.
   wait-for-builds:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       actions: read
     steps:
-      - name: Wait for the macOS builds
+      - name: Wait for the builds
         env:
           GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ inputs.plan }}
         run: |
           jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100"
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+          jq -r '.ci.github.artifacts_matrix.include[].targets | join(", ")' <<< "$PLAN" > targets
+          [[ -s targets ]] || { echo "no targets in the plan" >&2; exit 1; }
+          while read -r target; do
+            export JOB="build-local-artifacts ($target)"
             while true; do
               # A request that fails is tried again; the job's timeout ends it.
-              conclusion=$(gh api "$jobs" --jq ".jobs[] | select(.name == \"build-local-artifacts ($target)\") | .conclusion // \"\"") || conclusion=""
+              conclusion=$(gh api "$jobs" --jq '.jobs[] | select(.name == env.JOB) | .conclusion // ""') || conclusion=""
               case "$conclusion" in
                 success) echo "$target: built"; break ;;
                 "") sleep 20 ;;
                 *) echo "$target: the build ended with $conclusion" >&2; exit 1 ;;
               esac
             done
-          done
+          done < targets
 
   sign:
     needs: wait-for-builds
     runs-on: macos-15
     timeout-minutes: 90
     environment: release
+    outputs:
+      hashes: ${{ steps.hashes.outputs.hashes }}
     permissions:
       attestations: write
       contents: read
@@ -131,6 +138,12 @@ jobs:
           tar -xJf signed/aarch64-apple-darwin/gitaway-aarch64-apple-darwin.tar.xz -C "$RUNNER_TEMP/try"
           "$RUNNER_TEMP/try/gitaway-aarch64-apple-darwin/gitaway" --version
 
+      - name: Record the hashes
+        id: hashes
+        run: |
+          hashes=$(cat signed/*/*.sha256 | jq -cRn '[inputs | select(. != "") | split(" *") | {(.[1]): .[0]}] | add')
+          echo "hashes=$hashes" >> "$GITHUB_OUTPUT"
+
       # The build jobs attested the unsigned archives, which aren't published.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -147,5 +160,33 @@ jobs:
         with:
           name: artifacts-build-local-x86_64-apple-darwin
           path: signed/x86_64-apple-darwin/
+          if-no-files-found: error
+          overwrite: true
+
+  correct-hashes:
+    needs: sign
+    strategy:
+      matrix:
+        include: ${{ fromJson(inputs.plan).ci.github.artifacts_matrix.include }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: built
+      - env:
+          MANIFEST: built/${{ join(matrix.targets, '-') }}-dist-manifest.json
+          HASHES: ${{ needs.sign.outputs.hashes }}
+        run: .github/scripts/use-signed-hashes.sh "$MANIFEST" "$HASHES"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: built/
           if-no-files-found: error
           overwrite: true
