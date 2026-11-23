@@ -12,7 +12,7 @@ Security fixes go into the latest release, starting with 0.1.0. Older releases, 
 
 ## Release binaries
 
-From 0.1.1, releases include prebuilt binaries made by a GitHub Actions workflow in this repository, from the tagged commit only (pull requests don't build release files). Each file has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. How to check them is in the [README](README.md#verifying-releases); always pass `--source-ref refs/tags/<tag>` to `gh attestation verify`. The shell installer checks the checksum itself; the PowerShell installer doesn't. macOS binaries aren't yet signed by Apple, so macOS may refuse a file downloaded in a browser until you approve it, and asks for your Keychain password again after each update (see the README). A concern about a release file, or about the workflow, is in scope: report it privately, as above.
+From 0.1.1, releases include prebuilt binaries made by a GitHub Actions workflow in this repository, from the tagged commit only (pull requests don't build release files). Each file has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. How to check them is in the [README](README.md#verifying-releases); always pass `--source-ref refs/tags/<tag>` to `gh attestation verify`. The shell installer checks the checksum itself; the PowerShell installer doesn't. macOS binaries in releases after 0.2.0 are signed with a Developer ID certificate and notarized by Apple. Earlier ones aren't, so macOS may refuse one downloaded in a browser until you approve it. Windows binaries aren't signed. A concern about a release file, or about the workflow, is in scope: report it privately, as above.
 
 ## Scope
 

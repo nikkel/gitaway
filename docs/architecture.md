@@ -190,6 +190,20 @@ Each module starts with a `//!` comment that explains its purpose, how it fits i
 
 **Man pages are installed by packages, not by `cargo install`.** `man` only reads files from man directories; it can't ask a program for its page. `cargo install` can only copy binaries, so the release workflow generates the pages at build time (`cargo xtask man --out dist-man`, run by `.github/workflows/release-build-setup.yml`) and puts them in every archive. The installer scripts don't place them; the Homebrew formula (in the separate `nikkel/homebrew-tap` repo, which follows our releases) does. The pages aren't committed, so there's no copy to keep in sync. CI generates them on every push, so a broken page is caught early. Users of `cargo install` use `--help` instead.
 
+## Signing the macOS binaries
+
+`.github/workflows/sign-macos.yml` signs and notarizes the macOS programs during a release. dist's `release.yml` calls it as a custom job:
+
+```text
+ build each target ──▶ sign macOS ──▶ installers, checksums ──▶ GitHub release
+ (no secrets)          (approval)     (made from the signed archives)
+```
+
+- **It's separate from the build** so that no dependency's build script can read the certificate. The secrets are in the `release` environment, which needs the maintainer's approval and accepts only version tags.
+- **It replaces what the build uploaded**, under the same artifact names: the archive, its `.sha256` file, and the hash in dist's manifest, which the installers and `sha256.sum` are made from. The signed archives get their own attestation.
+- **If anything fails, nothing is published.** dist creates the release only after this job has succeeded.
+- `.github/scripts/sign-macos-archive.sh` does the work for one archive. With `SIGNING_IDENTITY=-` it needs no certificate, so you can try it on any release archive with its checksum file and manifest.
+
 ## Supported git versions
 
 The minimum is git 2.34, the version in Ubuntu 22.04. CI runs the tests against it, against the latest git, and against Apple's git on macOS. Use only git commands and options that 2.34 supports.
