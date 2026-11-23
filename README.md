@@ -76,7 +76,7 @@ $ gh attestation verify gitaway-x86_64-unknown-linux-musl.tar.xz \
     --repo nikkel/gitaway --source-ref refs/tags/v0.2.0
 ```
 
-Replace the file name and the version. Keep `--source-ref`: without it, the check also accepts files built from an unreleased branch.
+Replace the file name and the version. Keep `--source-ref`: without it, the check also accepts files built from an unreleased branch. On macOS, release binaries after 0.2.0 are also signed and notarized, which macOS checks itself. The Windows binary isn't signed, so Windows may warn about one downloaded in a browser.
 
 ### Homebrew (macOS and Linux)
 
@@ -102,7 +102,7 @@ $ cargo install --git https://github.com/nikkel/gitaway --locked
 
 This installs two commands, `gitaway` and `git-away`. They're the same program: git runs any program called `git-<name>` for `git <name>`, which is what makes `git away push` work. Use whichever you prefer.
 
-On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. It asks again after each update, because the permission belongs to that exact build of the program; a release binary signed by Apple (planned) will stop that.
+On macOS, the first time a newly installed gitaway reads its device key, macOS asks for your login password to let it use the Keychain item. Choose **Always Allow**. Release binaries up to 0.2.0, and builds from source, ask again after each update, because the permission belongs to that exact build of the program. Later release binaries are signed with a Developer ID certificate, so the permission should carry over to the next version.
 
 `gitaway --help` and `git away -h` show the help. Man pages (`man gitaway`) are in the release archives (`dist-man/`; copy them into a `man1` folder on your `MANPATH`) and come with Homebrew. The installer scripts and `cargo install` don't install them, so `git away --help` reports that there's no manual entry; use `git away -h` instead.
 

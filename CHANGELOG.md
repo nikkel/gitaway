@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format is based on 
 
 - `gitaway completions <shell>` prints a completion script for gitaway's own commands and options, for bash, zsh, fish, PowerShell and elvish. See the README for where each shell looks for it.
 
+### Security
+
+- macOS release binaries are signed with an Apple Developer ID certificate and notarized by Apple. macOS should no longer block one downloaded in a browser, and should stop asking for your Keychain password after each update once you've chosen **Always Allow** for a signed version.
+
 ## [0.2.0] - 2026-11-15
 
 Adds `gitaway tunnel`, for your git server's web interface away from home. Upgrade every copy of gitaway on a computer together: an older gitaway waits for a running `gitaway tunnel` to stop instead of using its tunnel. Changes since 0.1.1:
