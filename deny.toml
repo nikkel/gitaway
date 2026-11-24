@@ -11,10 +11,9 @@ all-features = false
 # Each ignore says why it doesn't apply; keep this in step with
 # .cargo/audit.toml.
 ignore = [
-    # rsa "Marvin attack": a timing attack on RSA decryption with a private
-    # key. gitaway only verifies RSA host-key signatures. russh pins
-    # rsa =0.10.0-rc.18.
-    "RUSTSEC-2023-0071",
+    # chrono "unmaintained": not a flaw, and no version is free of it. It
+    # comes from russh-util. Remove when russh moves.
+    "RUSTSEC-2026-0543",
     # zvariant, zbus_names and zvariant_derive "unmaintained": not a flaw,
     # they were merged into zbus 6. They come from keyring 4.2's Secret
     # Service store, which is still on zbus 5. Remove when keyring moves.
