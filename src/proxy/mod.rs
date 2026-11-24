@@ -415,9 +415,7 @@ mod tests {
     fn tunnel_failures_are_kept_for_the_user() {
         runtime().block_on(async {
             // Nothing listens on the port the tunnel maps to.
-            let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = closed.local_addr().unwrap().port();
-            drop(closed);
+            let (_reserved, port) = closed_port().await;
             let transport = Arc::new(Loopback {
                 asked: Mutex::new(Vec::new()),
             });
@@ -596,10 +594,17 @@ mod tests {
         });
     }
 
-    /// A port with nothing listening on 127.0.0.1.
-    async fn closed_port() -> u16 {
-        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        closed.local_addr().unwrap().port()
+    /// A port on 127.0.0.1 that refuses connections. It's one end of an open
+    /// connection, so nothing listens on it, and no parallel test is given it
+    /// while the streams are kept.
+    async fn closed_port() -> ((TcpStream, TcpStream), u16) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let port = client.local_addr().unwrap().port();
+        ((client, server), port)
     }
 
     /// The reply code says why a connection failed. A borrowing gitaway
@@ -619,8 +624,7 @@ mod tests {
             let direct = Proxy::start(Arc::new(Broken), tunnel_hosts())
                 .await
                 .unwrap();
-            // Taken last, so no listener above can be given the freed port.
-            let port = closed_port().await;
+            let (_reserved, port) = closed_port().await;
 
             let (address, token) = (refusing.address(), refusing.token().to_owned());
             let refused = tokio::task::spawn_blocking(move || {

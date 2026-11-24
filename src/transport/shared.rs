@@ -194,9 +194,12 @@ mod tests {
     fn a_closed_port_is_reported_as_refused() {
         runtime().block_on(async {
             let proxy = running_tunnel().await;
-            let closed = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-            let port = closed.local_addr().unwrap().port();
-            drop(closed);
+            // One end of an open connection: nothing listens on its port, and
+            // no parallel test is given it while the streams are kept.
+            let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let _server = listener.accept().unwrap();
+            let port = client.local_addr().unwrap().port();
             let error = borrow(&proxy)
                 .connect(SocketAddr::from(([10, 0, 0, 1], port)))
                 .await
