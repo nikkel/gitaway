@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+
+- The README and security policy said every release file has an attestation and that the shell installer always checks its download. Only the archives of binaries and their `.sha256` files are attested, and the installer skips its check where `sha256sum` is missing. Releases from 0.1.1 on are affected.
+
 ## [0.3.0-rc.1] - 2026-11-24
 
 A release candidate for 0.3.0, to test the signed macOS binaries before the real release. It isn't published to crates.io, so `cargo install` never picks it up. Changes since 0.2.0:

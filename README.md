@@ -67,9 +67,9 @@ On Windows, in PowerShell:
 > powershell -ExecutionPolicy Bypass -c "irm https://github.com/nikkel/gitaway/releases/latest/download/gitaway-installer.ps1 | iex"
 ```
 
-Both put `gitaway` and `git-away` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and add that folder to your `PATH` if needed. The shell installer checks each download against a SHA-256 checksum built into the script. The PowerShell one doesn't, so on Windows prefer downloading the archive from the [releases page](https://github.com/nikkel/gitaway/releases) and verifying it as below. You can also unpack an archive yourself: it holds the program, the man pages (`dist-man/`), the licences and this README. Archives for Linux and macOS hold only `gitaway`; make `git-away` a link to it (`ln -s gitaway git-away`) so `git away push` works.
+Both put `gitaway` and `git-away` in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and add that folder to your `PATH` if needed. The shell installer checks each download against a SHA-256 checksum built into the script, but where the `sha256sum` command is missing (such as on older macOS) it says so and installs without checking. The PowerShell one never checks. In both cases prefer downloading the archive from the [releases page](https://github.com/nikkel/gitaway/releases) and verifying it as below. You can also unpack an archive yourself: it holds the program, the man pages (`dist-man/`), the licences and this README. Archives for Linux and macOS hold only `gitaway`; make `git-away` a link to it (`ln -s gitaway git-away`) so `git away push` works.
 
-**Check a download.** Every release file is signed by the release workflow, with GitHub's artifact attestations. This proves the file was built from this repository's code for that release, not just that it matches a checksum:
+**Check a download.** Every archive with a built program in it is signed by the release workflow, with GitHub's artifact attestations. This proves it was built from this repository's code for that release, not just that it matches a checksum:
 
 ```console
 $ gh attestation verify gitaway-x86_64-unknown-linux-musl.tar.xz \
@@ -322,7 +322,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Verifying releases
 
-Each release is an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and files can't be changed or replaced, not even by the maintainer. GitHub signs a record of each release, and the release workflow signs every file with an artifact attestation. Check them with the [GitHub CLI](https://cli.github.com/):
+Each release is an [immutable GitHub release](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases): once it's published, its tag and files can't be changed or replaced, not even by the maintainer. GitHub signs a record of each release, and the release workflow gives every archive with a built program in it an artifact attestation. Check them with the [GitHub CLI](https://cli.github.com/):
 
 ```console
 $ gh release verify vX.Y.Z --repo nikkel/gitaway
@@ -330,7 +330,7 @@ $ gh release verify-asset vX.Y.Z ./gitaway-x86_64-unknown-linux-musl.tar.xz --re
 $ gh attestation verify ./gitaway-x86_64-unknown-linux-musl.tar.xz --repo nikkel/gitaway --source-ref refs/tags/vX.Y.Z
 ```
 
-The first two check that GitHub holds an unaltered release and that your file is part of it. The third checks that the workflow run that built the file was triggered by that version's tag. Releases before 0.1.1 are on crates.io only, with a git tag.
+The first two check that GitHub holds an unaltered release and that your file is part of it. The third checks that the workflow run that built the file was triggered by that version's tag. It works for those archives and their `.sha256` files only: the installers, the source archive and `sha256.sum` have no attestation, so check those with the first two. Releases before 0.1.1 are on crates.io only, with a git tag.
 
 ## License
 
