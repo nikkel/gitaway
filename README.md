@@ -330,7 +330,7 @@ $ gh release verify-asset vX.Y.Z ./gitaway-x86_64-unknown-linux-musl.tar.xz --re
 $ gh attestation verify ./gitaway-x86_64-unknown-linux-musl.tar.xz --repo nikkel/gitaway --source-ref refs/tags/vX.Y.Z
 ```
 
-The first two check that GitHub holds an unaltered release and that your file is part of it. The third checks that the workflow run that built the file was triggered by that version's tag. It works for those archives and their `.sha256` files only: the installers, the source archive and `sha256.sum` have no attestation, so check those with the first two. Releases before 0.1.1 are on crates.io only, with a git tag.
+The first two check that GitHub holds an unaltered release and that your file is part of it. The third checks that the workflow run that built the file was triggered by that version's tag. It works for those archives and their `.sha256` files only: the installers, `source.tar.gz` and `sha256.sum` have no attestation, so check those with the first two. None of the three works for the "Source code" downloads, which GitHub makes itself. Releases before 0.1.1 are on crates.io only, with a git tag.
 
 ## License
 

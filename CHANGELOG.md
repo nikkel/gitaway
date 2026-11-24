@@ -47,7 +47,7 @@ The first release with prebuilt binaries. Changes since 0.1.0:
 
 ### Added
 
-- Prebuilt binaries for Linux (x86_64 and arm64, static), macOS (Intel and Apple Silicon) and Windows (x86_64), with install scripts for Linux, macOS and Windows. Each release file has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. See the README for how to install and verify them. They aren't signed by Apple yet.
+- Prebuilt binaries for Linux (x86_64 and arm64, static), macOS (Intel and Apple Silicon) and Windows (x86_64), with install scripts for Linux, macOS and Windows. Each archive of binaries has a SHA-256 checksum and a GitHub artifact attestation, and each release is immutable. See the README for how to install and verify them. They aren't signed by Apple yet.
 
 ### Security
 
