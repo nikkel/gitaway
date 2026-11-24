@@ -271,7 +271,8 @@ where
 }
 
 /// Client settings: identify as gitaway (so server logs say what connected),
-/// offer only the given host key algorithms, and never ask for certificates.
+/// without a pre-release suffix because SSH allows no minus sign there. Offer
+/// only the given host key algorithms, and never ask for certificates.
 fn client_config(offered: Vec<Algorithm>) -> Arc<client::Config> {
     let preferred = Preferred {
         key: Cow::Owned(offered),
@@ -281,7 +282,11 @@ fn client_config(offered: Vec<Algorithm>) -> Arc<client::Config> {
     Arc::new(client::Config {
         client_id: SshId::Standard(Cow::Borrowed(concat!(
             "SSH-2.0-gitaway_",
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION_MAJOR"),
+            ".",
+            env!("CARGO_PKG_VERSION_MINOR"),
+            ".",
+            env!("CARGO_PKG_VERSION_PATCH"),
         ))),
         preferred,
         ..client::Config::default()
@@ -341,7 +346,7 @@ mod tests {
     use russh::keys::PrivateKey;
     use russh::keys::ssh_key::private::Ed25519Keypair;
     use std::time::Instant;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
     fn ed25519(seed: u8) -> PrivateKey {
@@ -460,6 +465,30 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(error, CaptureError::Timeout(_)), "{error}");
+        });
+    }
+
+    /// RFC 4253 section 4.2: no whitespace or minus sign in the software
+    /// version, which a pre-release version would otherwise bring in.
+    #[test]
+    fn the_identification_string_is_valid_ssh() {
+        runtime().block_on(async {
+            let (client, server) = tokio::io::duplex(4096);
+            let reader = async {
+                let mut line = String::new();
+                BufReader::new(server).read_line(&mut line).await.unwrap();
+                line
+            };
+            let (_, line) = tokio::join!(capture(client, Duration::from_secs(2), None), reader);
+            let software = line
+                .strip_prefix("SSH-2.0-")
+                .and_then(|rest| rest.strip_suffix("\r\n"))
+                .unwrap_or_else(|| panic!("{line:?}"));
+            assert!(software.starts_with("gitaway_"), "{line:?}");
+            assert!(
+                software.chars().all(|c| c.is_ascii_graphic() && c != '-'),
+                "{line:?}"
+            );
         });
     }
 
